@@ -99,10 +99,10 @@ ENV_FILE=/путь/bot.env DB_PATH=/путь/test.db .venv/bin/python main.py
 
 .sh — текстовый файл с командами для оболочки Ubuntu. Самостоятельный установщик дополнительно содержит упакованные исходники. Команда `bash имя-файла.sh` выполняет установку или обновление. Настройки, участники и ответы хранятся отдельно и при обновлении сохраняются.
 
-Загрузите новый `training-bot-update-2.3.0.sh` в `/home/dima/projects/training_attendance_bot` через VS Code Remote SSH, затем:
+Загрузите новый `training-bot-update-2.3.0.sh` в `/home/dima/projects/test/training_attendance_bot` через VS Code Remote SSH, затем:
 
 ```bash
-bash /home/dima/projects/training_attendance_bot/training-bot-update-2.3.0.sh
+bash /home/dima/projects/test/training_attendance_bot/training-bot-update-2.3.0.sh
 ```
 
 После запуска откройте /version в Telegram — должно быть 2.3.0. Затем /menu → «Опрос сейчас».
