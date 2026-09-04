@@ -1,0 +1,14 @@
+.env
+*.env
+!.env.example
+*.db
+*.db-*
+*.sqlite*
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.xlsx
+*service-account*.json
+*credentials*.json
+backups/
