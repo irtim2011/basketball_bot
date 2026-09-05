@@ -129,6 +129,20 @@ class IngressTests(unittest.IsolatedAsyncioTestCase):
                 await task
                 self.assertFalse(target.exists())
 
+    async def test_google_excel_upload_contains_full_workbook_export(self):
+        from handlers_trainer import export_table
+        message=SimpleNamespace(answer=AsyncMock(),answer_document=AsyncMock())
+        with tempfile.TemporaryDirectory() as tmp:
+            target=Path(tmp)/'full-google-workbook.xlsx'
+            target.write_bytes(b'complete workbook')
+            with patch('handlers_trainer.google_sheet.configured',return_value=True), \
+                 patch('handlers_trainer.google_sheet.sync_now',new=AsyncMock()), \
+                 patch('handlers_trainer.google_sheet.export_workbook_xlsx',return_value=str(target)):
+                await export_table(message)
+                message.answer_document.assert_awaited_once()
+                self.assertIn('Полная таблица', message.answer_document.await_args.kwargs['caption'])
+                self.assertFalse(target.exists())
+
 class ManualDeliveryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp=tempfile.TemporaryDirectory()

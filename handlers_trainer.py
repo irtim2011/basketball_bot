@@ -295,25 +295,32 @@ async def add_names(message: Message, state: FSMContext):
 @router.message(F.text == '📊 Таблица')
 async def table(message: Message, state: FSMContext):
     await state.clear()
-    if google_sheet.configured():
-        google_sheet.queue()
-        await message.answer(
-            'Обновляю лист «Посещения_bot». Изменения появятся в течение нескольких секунд:\n'
-            + google_sheet.sheet_url())
-        return
     key = ('table', message.from_user.id)
     if background.running(key):
         return
-    await message.answer('Готовлю таблицу…')
+    if google_sheet.configured():
+        await message.answer(
+            'Обновляю данные и готовлю полный Excel со всеми листами…\n'
+            + google_sheet.sheet_url())
+    else:
+        await message.answer('Готовлю резервную таблицу посещений…')
     background.start(key, lambda: export_table(message))
 
 async def export_table(message):
-    dates, rows=await events.summary()
-    if not rows:
-        await message.answer('Пока нет зарегистрированных участников.')
-        return
-    path=await asyncio.to_thread(build_xlsx,dates,rows)
+    if google_sheet.configured():
+        await google_sheet.sync_now()
+        path = await asyncio.to_thread(google_sheet.export_workbook_xlsx)
+        caption = ('🏀 Полная таблица: посещения, тарифы и номинальная доходность. '
+                   'Красный статус на листе «Тарифы» показывает клиентов с посещением без тарифа.')
+    else:
+        dates, rows=await events.summary()
+        if not rows:
+            await message.answer('Пока нет зарегистрированных участников.')
+            return
+        path=await asyncio.to_thread(build_xlsx,dates,rows)
+        caption = ('🏀 Резервная таблица ответов с 1 августа 2026. '
+                   'ID участников четырёхзначные. Y — «Приду», N — «Не приду».')
     try:
-        await message.answer_document(FSInputFile(path),caption='🏀 Ответы на опросы с 1 августа 2026. ID участников четырёхзначные. Y — «Приду», N — «Не приду».')
+        await message.answer_document(FSInputFile(path),caption=caption)
     finally:
         os.unlink(path)

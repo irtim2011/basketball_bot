@@ -3,8 +3,10 @@ import asyncio
 from datetime import datetime
 import json
 import logging
+import os
 from pathlib import Path
 import re
+import tempfile
 
 from config import GOOGLE_CREDENTIALS_FILE, GOOGLE_SHEET_ID, GOOGLE_SHEET_NAME, GOOGLE_SYNC_DISABLED
 
@@ -186,6 +188,33 @@ def check_blocking():
     if header[:5] != BASE_HEADERS:
         raise ValueError("Лист найден, но его первые пять заголовков изменены")
     return {"client_email": client_email, "title": worksheet.title, "url": sheet_url()}
+
+
+def export_workbook_xlsx():
+    """Export the complete Google workbook, including trainer-owned sheets."""
+    from google.auth.transport.requests import AuthorizedSession
+    from google.oauth2 import service_account
+
+    credentials = service_account.Credentials.from_service_account_file(
+        GOOGLE_CREDENTIALS_FILE,
+        scopes=["https://www.googleapis.com/auth/drive.readonly"],
+    )
+    response = AuthorizedSession(credentials).get(
+        f"https://www.googleapis.com/drive/v3/files/{GOOGLE_SHEET_ID}/export",
+        params={
+            "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+    fd, path = tempfile.mkstemp(suffix=".xlsx", prefix="training_full_")
+    try:
+        with os.fdopen(fd, "wb") as output:
+            output.write(response.content)
+    except Exception:
+        os.unlink(path)
+        raise
+    return path
 
 
 async def sync_now():

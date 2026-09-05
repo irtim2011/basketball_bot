@@ -327,9 +327,9 @@ class RoutingTest(unittest.IsolatedAsyncioTestCase):
             await feed('/table',chat_type='group')
             self.assertEqual(len(sent),before)
             with patch('handlers_trainer.google_sheet.configured',return_value=True), \
-                 patch('handlers_trainer.google_sheet.queue') as sheet_queue:
+                 patch('handlers_trainer.background.start') as export_start:
                 await feed('/table')
-                sheet_queue.assert_called_once_with()
+                export_start.assert_called_once()
                 self.assertIn('docs.google.com/spreadsheets',sent[-1].text)
             await feed('➕ Участник')
             await feed('@someone @tester 54545234')
