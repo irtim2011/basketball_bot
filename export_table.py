@@ -12,12 +12,18 @@ def build_xlsx(dates: list[str], rows: list[dict]) -> str:
     ws = wb.active
     ws.title = 'Посещения_bot'
     ws.append(['Ответы бота: Y — «Приду», N — «Не приду».'])
-    ws.append(['ID участника', 'Telegram ID', 'ФИО', 'Телеграм', 'Телефон'] +
+    ws.append(['ID участника', 'Telegram ID', 'ФИО', 'Телеграм', 'Телефон', 'flag_active'] +
               [datetime.fromisoformat(d) for d in dates])
-    ws.append(['', '', '', '', 'День недели'] + [WEEKDAY_SHORT_RU[datetime.fromisoformat(d).weekday()] for d in dates])
+    ws.append(['', '', '', '', 'День недели', 'За последние 30 дней'] +
+              [WEEKDAY_SHORT_RU[datetime.fromisoformat(d).weekday()] for d in dates])
     for row in rows:
+        excel_row = ws.max_row + 1
+        last_col = get_column_letter(len(dates) + 6)
+        active_formula = (f'=IF(COUNTIFS($G$2:${last_col}$2,">="&TODAY()-30,'
+                          f'$G$2:${last_col}$2,"<="&TODAY(),G{excel_row}:{last_col}{excel_row},"Y")'
+                          f'>0,"active","")')
         ws.append([row['participant_id'], str(row['telegram_id'] or ''), row['full_name'],
-                   '@'+row['username'] if row['username'] else '', row['phone']] +
+                   '@'+row['username'] if row['username'] else '', row['phone'], active_formula] +
                   [row['marks'].get(day, '') for day in dates])
         for cell in ws[ws.max_row][:5]:
             cell.data_type = 's'
@@ -26,13 +32,13 @@ def build_xlsx(dates: list[str], rows: list[dict]) -> str:
             cell.fill = PatternFill('solid', fgColor='243746')
             cell.font = Font(bold=True, color='FFFFFF')
             cell.alignment = Alignment(horizontal='center')
-    for cell in ws[2][5:]:
+    for cell in ws[2][6:]:
         cell.number_format = 'dd.mm.yyyy'
-    for idx, width in enumerate((18, 18, 36, 20, 20), 1):
+    for idx, width in enumerate((18, 18, 36, 20, 20, 22), 1):
         ws.column_dimensions[get_column_letter(idx)].width = width
-    for idx in range(6, len(dates)+6):
+    for idx in range(7, len(dates)+7):
         ws.column_dimensions[get_column_letter(idx)].width = 13
-    ws.freeze_panes = 'F4'
+    ws.freeze_panes = 'G4'
     ws.sheet_view.showGridLines = False
     info = wb.create_sheet('Как использовать')
     for line in [

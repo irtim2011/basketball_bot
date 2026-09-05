@@ -85,7 +85,8 @@ async def summary(limit_dates=None):
         "UNION ALL SELECT participant_id, substr(starts_at,1,10), status FROM responses"
     )).fetchall()
     first = datetime(2026, 8, 1).date()
-    last = max([utils.today(), first] + [datetime.fromisoformat(r['day']).date() for r in records])
+    last = max([utils.today(), datetime(2026, 12, 31).date(), first] +
+               [datetime.fromisoformat(r['day']).date() for r in records])
     dates = [(first + timedelta(days=i)).isoformat() for i in range((last-first).days+1)]
     if limit_dates:
         dates = dates[-limit_dates:]

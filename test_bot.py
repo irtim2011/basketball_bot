@@ -13,7 +13,7 @@ import utils
 from scheduler import tick
 from handlers_poll import process_answer
 from export_table import build_xlsx
-from google_sheet import merge_grid
+from google_sheet import merge_grid, _active_formula
 from openpyxl import load_workbook
 
 class DataTests(unittest.IsolatedAsyncioTestCase):
@@ -96,6 +96,12 @@ class DataTests(unittest.IsolatedAsyncioTestCase):
         _,rows=await events.summary()
         self.assertEqual(rows[0]['marks']['2026-09-07'],'Y')
 
+    async def test_calendar_runs_from_august_through_december(self):
+        dates, _ = await events.summary()
+        self.assertEqual(dates[0], '2026-08-01')
+        self.assertEqual(dates[-1], '2026-12-31')
+        self.assertEqual(len(dates), 153)
+
     async def test_duplicate_slot_rejected(self):
         await self.slot()
         with self.assertRaises(ValueError):
@@ -163,20 +169,29 @@ class DataTests(unittest.IsolatedAsyncioTestCase):
             wb=load_workbook(path)
             ws=wb.active
             self.assertEqual(wb.sheetnames,['Посещения_bot','Как использовать'])
-            self.assertEqual([c.value for c in ws[2]][:5],['ID участника','Telegram ID','ФИО','Телеграм','Телефон'])
-            self.assertEqual(ws.cell(4,6+dates.index('2026-09-01')).value,'Y')
+            self.assertEqual([c.value for c in ws[2]][:6],
+                             ['ID участника','Telegram ID','ФИО','Телеграм','Телефон','flag_active'])
+            self.assertEqual(ws.cell(4,7+dates.index('2026-09-01')).value,'Y')
             self.assertEqual(ws['C4'].data_type,'s')
             self.assertEqual(ws['B4'].value,'77')
             self.assertEqual(ws['A4'].value,'1001')
-            self.assertEqual(ws['F2'].value,datetime(2026,8,1))
-            self.assertEqual(ws['F3'].value,'Сб')
-            self.assertEqual(ws.freeze_panes,'F4')
+            self.assertTrue(ws['F4'].value.startswith('=IF(COUNTIFS('))
+            self.assertEqual(ws['G2'].value,datetime(2026,8,1))
+            self.assertEqual(ws['G3'].value,'Сб')
+            self.assertEqual(ws.freeze_panes,'G4')
             wb.close()
         finally:
             os.unlink(path)
 
 
 class GoogleSheetMergeTests(unittest.TestCase):
+    def test_active_formula_uses_rolling_thirty_days_and_russian_separators(self):
+        formula = _active_formula(3, 'FC')
+        self.assertIn('TODAY()-30', formula)
+        self.assertIn('G3:FC3', formula)
+        self.assertIn(';"Y"', formula)
+        self.assertNotIn(',"Y"', formula)
+
     def test_historical_row_is_reused_by_telegram_id(self):
         existing = [
             ['ID участника','Telegram ID','ФИО','Телеграм','Телефон','01.08.2026'],
@@ -191,7 +206,8 @@ class GoogleSheetMergeTests(unittest.TestCase):
         grid, adoptions = merge_grid(existing, ['2026-08-01','2026-09-07'], rows)
         self.assertEqual(adoptions, [(1,8001)])
         self.assertEqual(grid[2][:5], ['8001','77','Новое имя','@newname','+79991234567'])
-        self.assertEqual(grid[2][5:], ['Y','N'])
+        self.assertEqual(grid[2][5:], ['', 'Y','N'])
+        self.assertEqual(grid[0][5], 'flag_active')
         self.assertEqual(grid[0][-1], '07.09.2026')
 
     def test_new_participant_appends_without_touching_history(self):
@@ -207,8 +223,18 @@ class GoogleSheetMergeTests(unittest.TestCase):
         }]
         grid, adoptions = merge_grid(existing, ['2026-08-01'], rows)
         self.assertEqual(adoptions, [])
-        self.assertEqual(grid[2][0:6], ['8001','','История','','','Y'])
+        self.assertEqual(grid[2][0:7], ['8001','','История','','','','Y'])
         self.assertEqual(grid[3][0:5], ['1001','88','=Не формула','','1234567'])
+
+    def test_existing_flag_column_is_not_treated_as_a_date(self):
+        existing = [
+            ['ID участника','Telegram ID','ФИО','Телеграм','Телефон','flag_active','01.08.2026'],
+            ['','','','','День недели','За последние 30 дней','Сб'],
+            ['8001','','История','','','active','Y'],
+        ]
+        grid, _ = merge_grid(existing, ['2026-08-01'], [])
+        self.assertEqual(grid[0][5:7], ['flag_active','01.08.2026'])
+        self.assertEqual(grid[2][5:7], ['', 'Y'])
 
     def test_changed_or_duplicate_keys_stop_sync(self):
         with self.assertRaises(ValueError):

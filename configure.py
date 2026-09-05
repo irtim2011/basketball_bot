@@ -60,7 +60,7 @@ def main():
     args = parser.parse_args()
     original = args.path.read_text(encoding='utf-8') if args.path.exists() else ''
     values = dotenv_values(stream=__import__('io').StringIO(original))
-    version_upgrade = args.upgrade and values.get('SETTINGS_VERSION') != '2.3'
+    version_upgrade = args.upgrade and values.get('SETTINGS_VERSION') != '2.4'
     first_install = not values.get('BOT_TOKEN')
     changes = {}
     if version_upgrade:
@@ -68,7 +68,7 @@ def main():
             POLL_OFFSET_MINUTES='180',
             GOOGLE_SHEET_ID='1YNdUTiRQZ5q_NFu8dlNGDqTbSV3nmwZseq4ZIwy2s_g',
             GOOGLE_SHEET_NAME='Посещения_bot',
-            SETTINGS_VERSION='2.3')
+            SETTINGS_VERSION='2.4')
         print('🏀 Подготовлена синхронизация с листом «Посещения_bot».')
     if not args.upgrade or first_install:
         if os.isatty(0):

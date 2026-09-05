@@ -10,6 +10,7 @@ from config import GOOGLE_CREDENTIALS_FILE, GOOGLE_SHEET_ID, GOOGLE_SHEET_NAME, 
 
 log = logging.getLogger(__name__)
 BASE_HEADERS = ["ID участника", "Telegram ID", "ФИО", "Телеграм", "Телефон"]
+FLAG_HEADER = "flag_active"
 _task = None
 _dirty = False
 _missing_credentials_logged = False
@@ -54,23 +55,25 @@ def merge_grid(existing, dates, bot_rows):
         header = list(existing[0])
         if header[:5] != BASE_HEADERS:
             raise ValueError("В листе Посещения_bot изменены первые пять заголовков")
-        unexpected = [value for value in header[5:] if value and not _parse_date_label(value)]
+        date_start = 6 if str(header[5] if len(header) > 5 else "").strip() == FLAG_HEADER else 5
+        unexpected = [value for value in header[date_start:] if value and not _parse_date_label(value)]
         if unexpected:
-            raise ValueError("После колонки Телефон в Посещения_bot должны быть только даты")
+            raise ValueError("После flag_active в Посещения_bot должны быть только даты")
     else:
         header = BASE_HEADERS[:]
+        date_start = 5
 
-    date_values = {_parse_date_label(value) for value in header[5:] if _parse_date_label(value)}
+    date_values = {_parse_date_label(value) for value in header[date_start:] if _parse_date_label(value)}
     date_values.update(datetime.fromisoformat(value).date() for value in dates)
     labels = [value.strftime("%d.%m.%Y") for value in sorted(date_values)]
-    old_labels = [str(value).strip() for value in header[5:]]
+    old_labels = [str(value).strip() for value in header[date_start:]]
 
     records = []
     for original in existing[2:] if len(existing) > 2 else []:
         if not any(str(value).strip() for value in original):
             continue
         padded = list(original) + [""] * max(0, len(header) - len(original))
-        marks = {label: padded[index + 5] for index, label in enumerate(old_labels) if label}
+        marks = {label: padded[index + date_start] for index, label in enumerate(old_labels) if label}
         records.append({"base": padded[:5], "marks": marks})
 
     by_code = {}
@@ -125,8 +128,11 @@ def merge_grid(existing, dates, bot_rows):
         for iso_date in dates:
             record["marks"][_date_label(iso_date)] = participant.get("marks", {}).get(iso_date, "")
 
-    grid = [BASE_HEADERS + labels, ["", "", "", "", "День недели"] + [_weekday(label) for label in labels]]
-    grid.extend(record["base"] + [record["marks"].get(label, "") for label in labels] for record in records)
+    grid = [BASE_HEADERS + [FLAG_HEADER] + labels,
+            ["", "", "", "", "День недели", "За последние 30 дней"] +
+            [_weekday(label) for label in labels]]
+    grid.extend(record["base"] + [""] + [record["marks"].get(label, "") for label in labels]
+                for record in records)
     return grid, adoptions
 
 
@@ -136,6 +142,12 @@ def _column_name(number):
         number, remainder = divmod(number - 1, 26)
         result = chr(65 + remainder) + result
     return result
+
+
+def _active_formula(row, last_column):
+    return (f'=IF(COUNTIFS($G$1:${last_column}$1;">="&TODAY()-30;'
+            f'$G$1:${last_column}$1;"<="&TODAY();G{row}:{last_column}{row};"Y")>0;'
+            '"active";"")')
 
 
 def _worksheet():
@@ -157,6 +169,10 @@ def _sync_blocking(dates, rows):
         worksheet.resize(rows=required_rows, cols=required_cols)
     last = f"{_column_name(len(grid[0]))}{len(grid)}"
     worksheet.update(values=grid, range_name=f"A1:{last}", raw=True)
+    if len(grid) > 2:
+        last_column = _column_name(len(grid[0]))
+        formulas = [[_active_formula(row, last_column)] for row in range(3, len(grid) + 1)]
+        worksheet.update(values=formulas, range_name=f"F3:F{len(grid)}", raw=False)
     return adoptions
 
 

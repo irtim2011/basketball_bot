@@ -63,7 +63,7 @@ async def my_id(message: Message):
 
 @router.message(Command('version'))
 async def version(message: Message):
-    await message.answer(f'Бот тренировок · версия {VERSION}')
+    await message.answer(f'Бот тренировок · версия {VERSION}\n📱 Команда исполнена с телефона')
 
 async def show_schedule(message, user_id, page=0):
     upcoming = [(texts.next_start(s), s) for s in await db.list_schedule()]
