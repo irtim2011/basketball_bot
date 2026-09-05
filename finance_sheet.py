@@ -245,6 +245,22 @@ def _set_actual_profit(book):
     ]
     for index, width in enumerate((115, 115, 180, 170, 130, 190)):
         requests.append(_column_width(sheet.id, index, width))
+    for index, width in ((7, 230), (8, 125), (9, 135)):
+        requests.append(_column_width(sheet.id, index, width))
+    requests.extend([
+        {"repeatCell": {"range": {"sheetId": sheet.id, "startRowIndex": 1, "endRowIndex": 2,
+                                    "startColumnIndex": 8, "endColumnIndex": 9},
+                        "cell": {"userEnteredFormat": {"numberFormat": {"type": "CURRENCY", "pattern": "#,##0 ₽"}}},
+                        "fields": "userEnteredFormat.numberFormat"}},
+        {"repeatCell": {"range": {"sheetId": sheet.id, "startRowIndex": 4, "endRowIndex": 9,
+                                    "startColumnIndex": 8, "endColumnIndex": 9},
+                        "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "0"}}},
+                        "fields": "userEnteredFormat.numberFormat"}},
+        {"repeatCell": {"range": {"sheetId": sheet.id, "startRowIndex": 4, "endRowIndex": 9,
+                                    "startColumnIndex": 9, "endColumnIndex": 10},
+                        "cell": {"userEnteredFormat": {"numberFormat": {"type": "CURRENCY", "pattern": "#,##0 ₽"}}},
+                        "fields": "userEnteredFormat.numberFormat"}},
+    ])
     book.batch_update({"requests": requests})
 
 
