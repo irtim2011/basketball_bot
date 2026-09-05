@@ -1,2 +1,2 @@
-412e7ceb83f3edaea4f94f9e527d88c5dcb46f4a62f01571210413df15101a14  training-bot-install.sh
-412e7ceb83f3edaea4f94f9e527d88c5dcb46f4a62f01571210413df15101a14  training-bot-update-2.4.2.sh
+b761cd40eeafc950fa81e714778495268f7b12d996184fbf5e5f3221a5eec43e  training-bot-install.sh
+b761cd40eeafc950fa81e714778495268f7b12d996184fbf5e5f3221a5eec43e  training-bot-update-2.4.3.sh

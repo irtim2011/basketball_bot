@@ -15,6 +15,8 @@ case "${1:-status}" in
     sudo systemctl restart "$unit" ;;
   google-status)
     ENV_FILE="$HOME/.config/training-bot/bot.env" "$app_root/current/venv/bin/python" "$app_root/current/check_google_sheet.py" ;;
+  finance-setup)
+    ENV_FILE="$HOME/.config/training-bot/bot.env" "$app_root/current/venv/bin/python" "$app_root/current/finance_sheet.py" ;;
   google-connect)
     [[ -f "${2:-}" ]] || { echo "Использование: training-bot google-connect /путь/к/google-service-account.json"; exit 1; }
     mkdir -p "$HOME/.config/training-bot"
@@ -36,5 +38,5 @@ case "${1:-status}" in
   update)
     [[ -f "${2:-}" ]] || { echo "Использование: training-bot update /путь/training-bot-install.sh"; exit 1; }
     bash "$2" ;;
-  *) echo "Команды: status, logs, diagnose, configure, google-status, google-connect ПУТЬ, restart, stop, backup, rollback, update ПУТЬ"; exit 1 ;;
+  *) echo "Команды: status, logs, diagnose, configure, google-status, google-connect ПУТЬ, finance-setup, restart, stop, backup, rollback, update ПУТЬ"; exit 1 ;;
 esac
