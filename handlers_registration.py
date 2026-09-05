@@ -29,7 +29,7 @@ async def begin(message, user, state, editing=False):
     await state.update_data(existing_id=existing['id'] if existing else (stub['id'] if stub else None),
                             username=username)
     await state.set_state(Registration.name)
-    await message.answer(f'Введите ФИО. Ваш Telegram ID: {user.id}.\n/cancel — отменить.')
+    await message.answer(f'Введите ФИО строго в порядке «Фамилия Имя Отчество». Ваш Telegram ID: {user.id}.\n/cancel — отменить.')
 
 @router.message(CommandStart())
 async def start(message: Message, state: FSMContext):
@@ -42,9 +42,9 @@ async def edit(callback: CallbackQuery, state: FSMContext):
 
 @router.message(Registration.name, F.text)
 async def name(message: Message, state: FSMContext):
-    name = message.text.strip()
-    if not 3 <= len(name) <= 150 or name.startswith('/'):
-        await message.answer('Введите ФИО длиной от 3 до 150 символов.')
+    name = utils.registration_fio(message.text)
+    if not name or len(name) > 150:
+        await message.answer('Введите три слова кириллицей: Фамилия Имя Отчество (до 150 символов).')
         return
     await state.update_data(name=name)
     await state.set_state(Registration.phone)

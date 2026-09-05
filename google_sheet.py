@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import utils
 
 from config import GOOGLE_CREDENTIALS_FILE, GOOGLE_SHEET_ID, GOOGLE_SHEET_NAME, GOOGLE_SYNC_DISABLED
 
@@ -114,10 +115,26 @@ def merge_grid(existing, dates, bot_rows):
                 adoptions.append((participant["internal_id"], int(historical_code)))
         elif code in by_code:
             index = by_code[code]
+            owner = str(records[index]['base'][1] or '').strip()
+            if owner and owner != telegram:
+                raise ValueError('Исторический ID принадлежит другому Telegram участнику')
         else:
-            index = len(records)
-            records.append({"base": [code, "", "", "", ""], "marks": {}})
-            by_code[code] = index
+            candidates = []
+            for i, record in enumerate(records):
+                canonical, quality = utils.legacy_canonical_fio(str(record['base'][2]))
+                if quality == 'готово':
+                    candidates.append({'canonical_name': canonical, 'index': i})
+            match = utils.unique_legacy_match(participant.get('full_name') or '', candidates)
+            if match is not None and not str(records[match['index']]['base'][1] or '').strip():
+                index = match['index']
+                code = _four_digits(records[index]['base'][0])
+                if not code:
+                    raise ValueError('Некорректный legacy ID')
+                adoptions.append((participant['internal_id'], int(code)))
+            else:
+                index = len(records)
+                records.append({"base": [code, "", "", "", ""], "marks": {}})
+                by_code[code] = index
 
         record = records[index]
         record["base"] = [
@@ -128,7 +145,9 @@ def merge_grid(existing, dates, bot_rows):
             participant.get("phone") or "",
         ]
         for iso_date in dates:
-            record["marks"][_date_label(iso_date)] = participant.get("marks", {}).get(iso_date, "")
+            mark = participant.get("marks", {}).get(iso_date, "")
+            if mark:
+                record["marks"][_date_label(iso_date)] = mark
 
     grid = [BASE_HEADERS + [FLAG_HEADER] + labels,
             ["", "", "", "", "День недели", "За последние 30 дней"] +

@@ -305,6 +305,8 @@ class RoutingTest(unittest.IsolatedAsyncioTestCase):
         try:
             await feed('/start')
             await feed('Test Full Name')
+            self.assertIsNone(await db.get_participant_by_telegram_id(1))
+            await feed('Иванов Иван Иванович')
             await feed('+79991234567')
             self.assertIsNotNone(await db.get_participant_by_telegram_id(1))
             await feed('0')
@@ -338,7 +340,7 @@ class RoutingTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(p['is_registered'])
             self.assertTrue(p['is_active'])
             await feed('/start',uid=54545234)
-            await feed('Person By ID',uid=54545234)
+            await feed('Петров Пётр Петрович',uid=54545234)
             await feed('+79991234567',uid=54545234)
             self.assertTrue((await db.get_participant_by_telegram_id(54545234))['is_registered'])
             await feed('/id',uid=54545234)

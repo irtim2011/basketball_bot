@@ -55,6 +55,14 @@ CREATE TABLE IF NOT EXISTS attendance (
     responded_at TEXT,
     UNIQUE(participant_id, training_date)
 );
+
+CREATE TABLE IF NOT EXISTS legacy_identities (
+    public_id INTEGER PRIMARY KEY CHECK(public_id BETWEEN 1000 AND 9999),
+    canonical_name TEXT NOT NULL,
+    match_tokens TEXT NOT NULL,
+    quality TEXT NOT NULL DEFAULT 'готово',
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -143,6 +151,38 @@ async def get_participant(participant_id: int) -> Optional[aiosqlite.Row]:
     return await cur.fetchone()
 
 
+async def get_participant_by_public_id(public_id: int) -> Optional[aiosqlite.Row]:
+    return await (await _c().execute(
+        "SELECT * FROM participants WHERE public_id=?", (public_id,)
+    )).fetchone()
+
+
+async def upsert_legacy_identities(identities):
+    now = utils.now().isoformat()
+    for public_id, canonical_name, quality in identities:
+        tokens = "|".join(utils.fio_match_tokens(canonical_name))
+        if tokens:
+            await _c().execute(
+                "INSERT INTO legacy_identities(public_id,canonical_name,match_tokens,quality,updated_at) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(public_id) DO UPDATE SET "
+                "canonical_name=excluded.canonical_name,match_tokens=excluded.match_tokens,"
+                "quality=excluded.quality,updated_at=excluded.updated_at",
+                (int(public_id), canonical_name, tokens, quality, now),
+            )
+    await _c().commit()
+
+
+async def find_legacy_identity(full_name: str, participant_id=None):
+    rows = await (await _c().execute(
+        "SELECT l.*, p.id AS claimed_by FROM legacy_identities l "
+        "LEFT JOIN participants p ON p.public_id=l.public_id WHERE l.quality='готово'"
+    )).fetchall()
+    match = utils.unique_legacy_match(full_name, rows)
+    if match is not None and match['claimed_by'] in (None, participant_id):
+        return match
+    return None
+
+
 async def _assign_public_id(participant_id: int, preferred: int | None = None) -> int:
     current = await (await _c().execute(
         "SELECT public_id FROM participants WHERE id=?", (participant_id,)
@@ -165,6 +205,7 @@ async def _assign_public_id(participant_id: int, preferred: int | None = None) -
             )
             SELECT value FROM codes
             WHERE NOT EXISTS (SELECT 1 FROM participants WHERE public_id=value)
+              AND NOT EXISTS (SELECT 1 FROM legacy_identities WHERE public_id=value)
             ORDER BY value LIMIT 1
         """)).fetchone()
         if not row:
@@ -223,11 +264,25 @@ async def add_participant_by_id(telegram_id: int):
 
 async def register_participant(
     telegram_id: int, username: str | None, full_name: str, phone: str,
-    existing_id: int | None = None,
+    existing_id: int | None = None, preferred_public_id: int | None = None,
 ) -> int:
     now = utils.now().isoformat()
     async with _participant_lock:
+        if preferred_public_id is None:
+            legacy = await find_legacy_identity(full_name, existing_id)
+            if legacy is not None:
+                preferred_public_id = legacy['public_id']
         if existing_id is not None:
+            if preferred_public_id is not None:
+                conflict = await (await _c().execute(
+                    "SELECT id FROM participants WHERE public_id=? AND id<>?",
+                    (preferred_public_id, existing_id),
+                )).fetchone()
+                if not conflict:
+                    await _c().execute(
+                        "UPDATE participants SET public_id=? WHERE id=?",
+                        (preferred_public_id, existing_id),
+                    )
             await _c().execute(
                 "UPDATE participants SET telegram_id=?, username=COALESCE(?, username), "
                 "full_name=?, phone=?, is_registered=1, registered_at=? WHERE id=?",
@@ -243,7 +298,7 @@ async def register_participant(
             "VALUES (?, ?, ?, ?, 0, 1, ?, ?)",
             (telegram_id, username, full_name, phone, now, now),
         )
-        await _assign_public_id(cur.lastrowid)
+        await _assign_public_id(cur.lastrowid, preferred_public_id)
         await _c().commit()
         return cur.lastrowid
 
