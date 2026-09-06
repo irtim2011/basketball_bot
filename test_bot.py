@@ -187,9 +187,11 @@ class DataTests(unittest.IsolatedAsyncioTestCase):
 class GoogleSheetMergeTests(unittest.TestCase):
     def test_active_formula_uses_rolling_thirty_days_and_russian_separators(self):
         formula = _active_formula(3, 'FC')
-        self.assertIn('TODAY()-30', formula)
+        self.assertIn('TODAY()-29', formula)
+        self.assertIn('DATEVALUE', formula)
+        self.assertIn('<=TODAY()', formula)
         self.assertIn('G3:FC3', formula)
-        self.assertIn(';"Y"', formula)
+        self.assertIn('="Y"', formula)
         self.assertNotIn(',"Y"', formula)
 
     def test_historical_row_is_reused_by_telegram_id(self):

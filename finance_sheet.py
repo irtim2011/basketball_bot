@@ -678,17 +678,12 @@ def _set_client_analytics(book):
 
 
 def setup():
+    # Rebuild derived views only. Registration data and purchases are user-owned.
+    from finance_views import setup_views
     book = _client().open_by_key(GOOGLE_SHEET_ID)
-    people, _redirects = _canonicalize_roster(book)
-    _set_tariff_alert(book)
-    directory = _set_client_directory(book, people)
-    _set_purchase_matrix(book, people, directory)
-    _set_client_analytics(book)
-    _set_nominal_finance(book)
-    _set_monthly_profit(book)
-    _seed_legacy_identities(people)
-    restore_attendance_copy(book)
+    setup_views(book)
     return book
+
 
 
 
@@ -730,23 +725,8 @@ def _reset_view(book, title, rows, cols):
 
 
 def restore_attendance_copy(book):
-    source = book.worksheet('Посещения_bot')
-    values = source.get_all_values(pad_values=False)
-    if len(values) < 2 or values[0][:3] != ['ID участника', 'Telegram ID', 'ФИО']:
-        raise ValueError('Неожиданная структура источника посещений')
-    rows, cols = len(values), len(values[0])
-    target = _reset_view(book, 'Посещения', rows, cols)
-    source_range = {'sheetId': source.id, 'startRowIndex': 0, 'endRowIndex': rows,
-                    'startColumnIndex': 0, 'endColumnIndex': cols}
-    destination = dict(source_range, sheetId=target.id)
-    requests = [{'copyPaste': {'source': source_range, 'destination': destination,
-        'pasteType': kind}} for kind in ('PASTE_VALUES', 'PASTE_FORMAT')]
-    requests.append({'updateSheetProperties': {'properties': {'sheetId': target.id,
-        'gridProperties': {'frozenRowCount': 2, 'frozenColumnCount': 3}},
-        'fields': 'gridProperties(frozenRowCount,frozenColumnCount)'}})
-    for i, width in enumerate((85, 125, 270, 150, 150, 125)):
-        requests.append(_column_width(target.id, i, width))
-    book.batch_update({'requests': requests})
+    from finance_views import mirror
+    mirror(book)
 
 
 def _month_spans():

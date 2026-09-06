@@ -19,7 +19,7 @@ ln -s "$previous/venv" "$release/venv"
 "$release/venv/bin/python" "$release/check_config.py"
 (cd "$release" && GOOGLE_SYNC_DISABLED=1 "$release/venv/bin/python" -m unittest discover -p 'test_*.py' -q)
 "$release/venv/bin/python" "$release/check_google_sheet.py"
-backup="$(mktemp -d "$app_root/backups/deploy-2.4.5-XXXXXXXX")"
+backup="$(mktemp -d "$app_root/backups/deploy-2.4.6-XXXXXXXX")"
 "$release/venv/bin/python" "$release/backup.py" "$DB_PATH" "$backup"
 (cd "$release" && "$release/venv/bin/python" - "$backup" <<'PY'
 import sys, shutil
@@ -54,6 +54,6 @@ done
 sleep 8
 systemctl is-active --quiet "$unit"
 [[ "$(systemctl show "$unit" -p MainPID --value)" == "$new_pid" ]]
-[[ "$(cat "$release/version.py")" == "VERSION = '2.4.5'" ]]
+[[ "$(cat "$release/version.py")" == "VERSION = '2.4.6'" ]]
 trap - ERR
 printf 'release=%s\nold_pid=%s\nnew_pid=%s\nbackup=%s\n' "$release" "$old_pid" "$new_pid" "$backup"

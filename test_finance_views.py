@@ -28,14 +28,10 @@ class FinanceViewsTests(unittest.TestCase):
         self.assertEqual(values[1][3],'=C2*600')
 
     def test_copy_resets_exact_used_grid_before_paste(self):
-        book, source, target=MagicMock(),MagicMock(id=1),MagicMock(id=2)
-        book.worksheet.return_value=source
-        source.get_all_values.return_value=[['ID участника','Telegram ID','ФИО']+['']*4,['']*7,['8006','','Иванов Иван']]
-        with patch.object(finance,'_reset_view',return_value=target) as reset:
+        book=MagicMock()
+        with patch('finance_views.mirror') as mirror:
             finance.restore_attendance_copy(book)
-        reset.assert_called_once_with(book,'Посещения',3,7)
-        requests=book.batch_update.call_args.args[0]['requests']
-        self.assertEqual([r['copyPaste']['pasteType'] for r in requests if 'copyPaste' in r],['PASTE_VALUES','PASTE_FORMAT'])
+        mirror.assert_called_once_with(book)
 
     def test_reset_removes_old_contents_and_groups(self):
         book, sheet=MagicMock(),MagicMock(id=2)

@@ -166,9 +166,9 @@ def _column_name(number):
 
 
 def _active_formula(row, last_column):
-    return (f'=IF(COUNTIFS($G$1:${last_column}$1;">="&TODAY()-30;'
-            f'$G$1:${last_column}$1;"<="&TODAY();G{row}:{last_column}{row};"Y")>0;'
-            '"active";"")')
+    dates = f'IFERROR(DATEVALUE($G$1:${last_column}$1);0)'
+    return (f'=IF(SUMPRODUCT(N({dates}>=TODAY()-29);N({dates}<=TODAY());'
+            f'N(G{row}:{last_column}{row}="Y"))>0;"active";"")')
 
 
 def _worksheet():
