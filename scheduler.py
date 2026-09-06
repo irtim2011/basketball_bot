@@ -93,11 +93,18 @@ async def scheduled_kick(bot):
     # A synchronous APScheduler job runs in a thread, without an asyncio loop.
     kick(bot)
 
+
+async def refresh_google_sheet():
+    # Capture trainer corrections even when no Telegram answer arrives.
+    google_sheet.queue()
+
 def setup_scheduler(bot):
     scheduler=AsyncIOScheduler(timezone=utils.TZ)
     # Coalesce interval invocations into the same supervised background job.
     scheduler.add_job(scheduled_kick,'interval',seconds=10,args=[bot],id='delivery',
                       next_run_time=utils.now(),max_instances=1,coalesce=True,
                       executor='default')
+    scheduler.add_job(refresh_google_sheet, 'interval', seconds=60,
+                      id='google-sheet-refresh', max_instances=1, coalesce=True)
     scheduler.start()
     return scheduler

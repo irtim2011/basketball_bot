@@ -7,7 +7,7 @@ from aiogram import Router, F
 from aiogram.filters import Command, BaseFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery, FSInputFile
+from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 import db
 import events
 import utils
@@ -142,6 +142,7 @@ async def save_training(callback: CallbackQuery, state: FSMContext):
     except ValueError as exc:
         await callback.message.answer(str(exc))
         return
+    google_sheet.queue()
     await state.clear()
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(f'🏀 Тренировка сохранена! Опрос отправится {texts.reminder_label()} до начала. Если осталось меньше — в ближайшие секунды.',
@@ -191,6 +192,7 @@ async def delete_confirm(callback: CallbackQuery, state: FSMContext):
     if (await state.get_data()).get('delete_slot_id') != slot_id:
         return
     await events.delete_slot(slot_id)
+    google_sheet.queue()
     await state.clear()
     await callback.message.edit_text('Тренировка удалена.')
     await show_schedule(callback.message, callback.from_user.id)
@@ -291,22 +293,45 @@ async def add_names(message: Message, state: FSMContext):
     await message.answer('Список обновлён.',reply_markup=menu(message.from_user.id))
     await roster_page(message)
 
+def can_access_table(message):
+    """Workbook access is limited to a trainer's own private conversation."""
+    user = getattr(message, 'from_user', None)
+    chat = getattr(message, 'chat', None)
+    return bool(user and chat and user.id in TRAINER_IDS
+                and chat.type == 'private' and chat.id == user.id)
+
+
+def full_workbook_link():
+    return google_sheet.sheet_url() + '?gid=2056812652#gid=2056812652'
+
+
 @router.message(Command('table'))
 @router.message(F.text == '📊 Таблица')
 async def table(message: Message, state: FSMContext):
+    if not can_access_table(message):
+        return
     await state.clear()
     key = ('table', message.from_user.id)
     if background.running(key):
         return
+    link = full_workbook_link()
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text='📊 Открыть полную таблицу', url=link)
+    ]])
     if google_sheet.configured():
         await message.answer(
-            'Обновляю данные и готовлю полный Excel со всеми листами…\n'
-            + google_sheet.sheet_url())
+            'Полная таблица доступна по кнопке ниже.\n'
+            'Обновляю данные и готовлю Excel со всеми листами…\n'
+            + link, reply_markup=reply_markup)
     else:
-        await message.answer('Готовлю резервную таблицу посещений…')
+        await message.answer('Полная таблица доступна по кнопке ниже.\n'
+                             'Готовлю резервную таблицу посещений…\n'
+                             + link, reply_markup=reply_markup)
     background.start(key, lambda: export_table(message))
 
 async def export_table(message):
+    if not can_access_table(message):
+        return
     if google_sheet.configured():
         await google_sheet.sync_now()
         path = await asyncio.to_thread(google_sheet.export_workbook_xlsx)
@@ -321,6 +346,7 @@ async def export_table(message):
         caption = ('🏀 Резервная таблица ответов с 1 августа 2026. '
                    'ID участников четырёхзначные. Y — «Приду», N — «Не приду».')
     try:
-        await message.answer_document(FSInputFile(path),caption=caption)
+        if can_access_table(message):
+            await message.answer_document(FSInputFile(path),caption=caption)
     finally:
         os.unlink(path)

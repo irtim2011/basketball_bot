@@ -11,6 +11,25 @@ def matches(slot, start):
     return (slot['training_date'] == start.date().isoformat() if slot['training_date']
             else slot['weekday'] == start.weekday())
 
+
+async def cancel_invalid_future_responses(slot_id=None):
+    """Keep past history and invalidate only future sessions that no longer exist."""
+    now = utils.now()
+    sql = ("SELECT id, schedule_id, starts_at FROM responses WHERE is_cancelled=0 "
+           "AND datetime(starts_at)>datetime(?)")
+    params = (now.isoformat(),)
+    if slot_id is not None:
+        sql += " AND schedule_id=?"
+        params += (slot_id,)
+    records = await (await db._c().execute(sql, params)).fetchall()
+    slots = {slot['id']: slot for slot in await db.list_schedule()}
+    cancelled = [(row['id'],) for row in records
+                 if datetime.fromisoformat(row['starts_at']) > now
+                 and not matches(slots.get(row['schedule_id']), datetime.fromisoformat(row['starts_at']))]
+    if cancelled:
+        await db._c().executemany("UPDATE responses SET is_cancelled=1 WHERE id=?", cancelled)
+        await db._c().commit()
+
 async def queue_manual(slot_id, start, trainer_id):
     await db._c().execute(
         "INSERT INTO manual_polls(schedule_id,starts_at,trainer_id,requested_at) VALUES (?,?,?,?) "
@@ -42,6 +61,7 @@ async def save_slot(weekday, time_str, training_date=None, slot_id=None, starts_
             (weekday, time_str, training_date, starts_on))
         slot_id = cur.lastrowid
     await conn.commit()
+    await cancel_invalid_future_responses(slot_id)
     return slot_id
 
 async def get_slot(slot_id):
@@ -51,6 +71,7 @@ async def get_slot(slot_id):
 async def delete_slot(slot_id):
     await db._c().execute("UPDATE schedule SET is_active=0 WHERE id=?", (slot_id,))
     await db._c().commit()
+    await cancel_invalid_future_responses(slot_id)
 
 def occurrences(slot, now, days=14):
     if slot["training_date"]:
@@ -74,6 +95,12 @@ async def response_for(participant_id, slot_id, start):
     await conn.execute(
         "INSERT OR IGNORE INTO responses(participant_id,schedule_id,starts_at) VALUES (?,?,?)",
         (participant_id, slot_id, start.isoformat()))
+    # If a trainer moves a future session away and then back, start a fresh
+    # unanswered poll. A prior cancelled answer must not silently revive.
+    await conn.execute(
+        "UPDATE responses SET is_cancelled=0, status='pending', message_id=NULL, responded_at=NULL "
+        "WHERE participant_id=? AND schedule_id=? AND starts_at=? AND is_cancelled=1",
+        (participant_id, slot_id, start.isoformat()))
     await conn.commit()
     return await (await conn.execute(
         "SELECT * FROM responses WHERE participant_id=? AND schedule_id=? AND starts_at=?",
@@ -82,7 +109,7 @@ async def response_for(participant_id, slot_id, start):
 async def summary(limit_dates=None):
     records = await (await db._c().execute(
         "SELECT participant_id, training_date AS day, status FROM attendance "
-        "UNION ALL SELECT participant_id, substr(starts_at,1,10), status FROM responses"
+        "UNION ALL SELECT participant_id, substr(starts_at,1,10), status FROM responses WHERE is_cancelled=0"
     )).fetchall()
     first = datetime(2026, 8, 1).date()
     last = max([utils.today(), datetime(2026, 12, 31).date(), first] +

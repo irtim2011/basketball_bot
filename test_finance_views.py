@@ -46,12 +46,17 @@ class FinanceViewsTests(unittest.TestCase):
         size=next(r['updateSheetProperties']['properties']['gridProperties'] for r in requests if 'updateSheetProperties' in r)
         self.assertEqual((size['rowCount'],size['columnCount']),(81,159))
 
-    def test_successful_sync_refreshes_copy(self):
+    def test_successful_sync_reconciles_before_adding_roster(self):
         worksheet=MagicMock(row_count=200,col_count=159)
-        worksheet.get_all_values.return_value=[]
-        with patch.object(google_sheet,'_worksheet',return_value=worksheet),patch.object(finance,'restore_attendance_copy') as refresh:
-            google_sheet._sync_blocking([],[])
+        calls=[]
+        with patch.object(google_sheet,'_worksheet',return_value=worksheet), \
+                patch('attendance_sync.workbook_lock'), \
+                patch('attendance_sync.reconcile_book',side_effect=lambda *args: calls.append('reconcile') or [(1,8001)]) as reconcile, \
+                patch('finance_views.sync_roster',side_effect=lambda *args: calls.append('roster')) as refresh:
+            self.assertEqual(google_sheet._sync_blocking([],[]),[(1,8001)])
+        reconcile.assert_called_once_with(worksheet.spreadsheet,[],[])
         refresh.assert_called_once_with(worksheet.spreadsheet)
+        self.assertEqual(calls,['reconcile','roster'])
 
 class ExportAuditTests(unittest.TestCase):
     def test_detects_external_and_missing_sheet_references(self):

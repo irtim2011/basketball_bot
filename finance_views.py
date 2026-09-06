@@ -75,67 +75,79 @@ def reset(book, title, rows, cols):
     return _reset_view(book, title, rows, cols)
 
 
+def existing_view(book, title, rows, cols):
+    try:
+        sheet = book.worksheet(title)
+        if sheet.row_count < rows or sheet.col_count < cols:
+            sheet.resize(rows=max(rows, sheet.row_count), cols=max(cols, sheet.col_count))
+        return sheet, False
+    except gspread.WorksheetNotFound:
+        return book.add_worksheet(title=title, rows=rows, cols=cols), True
+
+
+def write_calculations(sheet, values):
+    # Skip layout blanks so notes outside calculated cells and all formats survive.
+    requests = []
+    for r, row in enumerate(values):
+        first = 0
+        while first < len(row):
+            if row[first] == '':
+                first += 1
+                continue
+            end = first+1
+            while end < len(row) and row[end] != '':
+                end += 1
+            requests.append(write(sheet.id, r, first, [row[first:end]]))
+            first = end
+    for start in range(0, len(requests), 400):
+        sheet.spreadsheet.batch_update({'requests': requests[start:start+400]})
+
+
 def lookup(id_cell, limit):
     # Tariff IDs are numeric, registration IDs may arrive as text.
-    return f'=IF({id_cell}="";"";IFERROR(VLOOKUP(VALUE({id_cell});\'Тарифы\'!$A$2:$C${limit};3;FALSE);""))'
+    # INDEX retains the source-cell reference for the empty check. A plain
+    # VLOOKUP converts a genuinely empty tariff to 0 when Excel recalculates.
+    tariff = (f'INDEX(\'Тарифы\'!$C$2:$C${limit};'
+              f'MATCH({id_cell}&"";INDEX(\'Тарифы\'!$A$2:$A${limit}&"";0);0))')
+    return f'=IF({id_cell}="";"";IFERROR(IF({tariff}="";"";{tariff});""))'
 
 
 def source(id_cell, limit):
-    return f'=IF({id_cell}="";"";IFERROR("Тарифы!C"&(MATCH(VALUE({id_cell});\'Тарифы\'!$A$2:$A${limit};0)+1);"ID отсутствует в Тарифы"))'
+    return f'=IF({id_cell}="";"";IFERROR("Тарифы!C"&(MATCH({id_cell}&"";INDEX(\'Тарифы\'!$A$2:$A${limit}&"";0);0)+1);"ID отсутствует в Тарифы"))'
 
 
 def identity(row, bot_row, limit):
-    return [f'=IF(\'Посещения_bot\'!A{bot_row}="";"";\'Посещения_bot\'!A{bot_row})',
-            f'=IF($A{row}="";"";\'Посещения_bot\'!C{bot_row})', lookup(f'$A{row}', limit),
+    return [f'=IF(\'Посещения\'!A{bot_row}="";"";\'Посещения\'!A{bot_row})',
+            f'=IF($A{row}="";"";\'Посещения\'!C{bot_row})', lookup(f'$A{row}', limit),
             source(f'$A{row}', limit)]
 
 
 def mirror(book):
-    """One in-place native copy, including formulas, dimensions and conditional formats."""
-    src = book.worksheet('Посещения_bot')
-    try:
-        dst = book.worksheet('Посещения')
-    except gspread.WorksheetNotFound:
-        dst = book.add_worksheet(title='Посещения', rows=src.row_count, cols=src.col_count)
-    metadata = book.fetch_sheet_metadata(params={'includeGridData': 'true',
-        'fields': 'sheets(properties,merges,conditionalFormats,bandedRanges,basicFilter,rowGroups,columnGroups,data(startRow,startColumn,rowMetadata(pixelSize,hiddenByUser),columnMetadata(pixelSize,hiddenByUser)))'})
-    s = next(x for x in metadata['sheets'] if x['properties']['sheetId'] == src.id)
-    t = next(x for x in metadata['sheets'] if x['properties']['sheetId'] == dst.id)
-    requests = []
-    for key in ('rowGroups', 'columnGroups'):
-        requests += [{'deleteDimensionGroup': {'range': g['range']}} for g in reversed(t.get(key, []))]
-    requests += [{'unmergeCells': {'range': m}} for m in t.get('merges', [])]
-    requests += [{'deleteConditionalFormatRule': {'sheetId': dst.id, 'index': i}}
-                 for i in reversed(range(len(t.get('conditionalFormats', []))))]
-    requests += [{'deleteBanding': {'bandedRangeId': b['bandedRangeId']}} for b in t.get('bandedRanges', [])]
-    if t.get('basicFilter'):
-        requests.append({'clearBasicFilter': {'sheetId': dst.id}})
-    requests.append({'updateCells': {'range': {'sheetId': dst.id},
-                                    'fields': 'userEnteredValue,userEnteredFormat,note,dataValidation'}})
-    grid = deepcopy(s['properties']['gridProperties'])
-    requests.append({'updateSheetProperties': {'properties': {'sheetId': dst.id,
-        'gridProperties': grid}, 'fields': 'gridProperties'}})
-    requests.append({'copyPaste': {'source': rg(src.id, 0, src.row_count, 0, src.col_count),
-        'destination': rg(dst.id, 0, src.row_count, 0, src.col_count), 'pasteType': 'PASTE_NORMAL'}})
-    # PASTE_NORMAL brings formats, conditional formats, merges and validation; dimensions are separate.
-    data = s.get('data', [{}])[0]
-    for key, dimension, count, default in [('rowMetadata', 'ROWS', src.row_count, 21),
-                                          ('columnMetadata', 'COLUMNS', src.col_count, 100)]:
-        entries = data.get(key, [])
-        normalized = [dict(pixelSize=(entries[i].get('pixelSize', default) if i < len(entries) else default),
-                           hiddenByUser=(entries[i].get('hiddenByUser', False) if i < len(entries) else False))
-                      for i in range(count)]
-        begin = 0
-        for i in range(1, count+1):
-            if i == count or normalized[i] != normalized[begin]:
-                requests.append(dim(dst.id, dimension, begin, i, **normalized[begin]))
-                begin = i
-    book.batch_update({'requests': requests})
+    """Reconcile both attendance tabs, retaining trainer corrections and formatting."""
+    from attendance_sync import reconcile_book
+    return reconcile_book(book, None, None)
+
+
+def sync_roster(book):
+    from finance_roster import sync_roster as append_people, refresh_input_formulas, capacities, view_capacity_state
+    added = append_people(book)
+    source = book.worksheet('Посещения')
+    capacity = max(200, source.row_count)
+    nominal = book.worksheet('Номинальная доходность')
+    if (capacity > nominal.row_count - FIRST + 3 or
+            view_capacity_state(book.id) != capacities(book)):
+        setup_views(book, reconcile=False)
+    elif added:
+        refresh_input_formulas(book, capacity)
+        purchase_totals(book, book.worksheet('Тарифы').row_count)
+    return added
 
 
 def purchase_totals(book, limit):
     """Five visible monthly count columns; never rewrite user-entered purchases."""
     sheet = book.worksheet('Покупки тарифов')
+    directory = book.worksheet('Справочник_клиентов')
+    from finance_roster import purchase_identity_formulas
     n = sheet.row_count
     sheet.resize(rows=n, cols=max(sheet.col_count, 165))
     values = [[name+' · куплено' for name, _, _ in months()], ['Сумма тренировок']*5]
@@ -144,12 +156,18 @@ def purchase_totals(book, limit):
                        for _, offset, count in months()])
     requests = [write(sheet.id, 0, 160, values), header(rg(sheet.id, 0, 2, 160, 165)),
                 dim(sheet.id, 'COLUMNS', 160, 165, pixelSize=155),
+                write(sheet.id, 2, 1, [purchase_identity_formulas(r, directory.row_count)
+                                       for r in range(3, n+1)]),
                 write(sheet.id, 2, 5, [[lookup(f'$B{r}', limit)] for r in range(3, n+1)]),
+                write(sheet.id, 2, 6, [[f'=IF($B{r}="";"";IFERROR(INDEX(\'Справочник_клиентов\'!$H$2:$H${directory.row_count};MATCH($B{r}&"";INDEX(\'Справочник_клиентов\'!$B$2:$B${directory.row_count}&"";0);0));"ID не найден"))'] for r in range(3, n+1)]),
                 {'setDataValidation': {'range': rg(sheet.id, 1, n, 3, 7)}},
                 {'setDataValidation': {'range': rg(sheet.id, 1, 2, 0, 1)}},
+                {'setDataValidation': {'range': rg(sheet.id, 2, n, 0, 1), 'rule': {
+                    'condition': {'type': 'ONE_OF_RANGE', 'values': [{'userEnteredValue':
+                        f"='Справочник_клиентов'!$A$2:$A${directory.row_count}"}]},
+                    'strict': True, 'showCustomUi': True}}},
                 rule(rg(sheet.id, 2, n, 5, 6), '=AND($B3<>"";$F3="")')]
     book.batch_update({'requests': requests})
-    directory = book.worksheet('Справочник_клиентов')
     book.batch_update({'requests': [write(directory.id, 1, 6,
         [[lookup(f'$B{r}', limit)] for r in range(2, directory.row_count+1)])]})
     return n
@@ -173,7 +191,7 @@ def nominal_values(capacity, limit):
         v[12][offset+6] = '=DATE(2026;8;1)+'+str(offset)
         v[13][offset+6] = f'=TEXT({c}13;"ddd")'
         v[14][offset+6] = f'=SUM({c}{FIRST}:{c}{end})'
-        v[15][offset+6] = f'=COUNTIF(\'Посещения_bot\'!{c}$3:{c}${capacity};"Y")'
+        v[15][offset+6] = f'=IF({c}$13>TODAY();0;COUNTIF(\'Посещения\'!{c}$3:{c}${capacity};"Y"))'
         v[16][offset+6] = f'={c}16*600'
         v[17][offset+6] = f'={c}15-{c}17'
     for r, label in zip(range(14, 18), ['ДОХОД', 'ПОСЕЩЕНИЙ', 'АРЕНДА', 'ПРИБЫЛЬ']):
@@ -181,11 +199,11 @@ def nominal_values(capacity, limit):
         v[r][5] = f'=SUM(G{r+1}:FC{r+1})'
     for r, bot in enumerate(range(3, capacity+1), FIRST):
         v[r-1][:6] = identity(r, bot, limit)+[
-            f'=IF($A{r}="";"";COUNTIF(\'Посещения_bot\'!G{bot}:FC{bot};"Y"))',
+            f'=IF($A{r}="";"";COUNTIFS($G$13:$FC$13;"<="&TODAY();\'Посещения\'!G{bot}:FC{bot};"Y"))',
             f'=IF($A{r}="";"";SUM(G{r}:FC{r}))']
         for offset in range(DAYS):
             c = col(7+offset)
-            v[r-1][offset+6] = f'=IF($A{r}="";"";IF(\'Посещения_bot\'!{c}{bot}="Y";IF($C{r}="";"нет тарифа";$C{r});0))'
+            v[r-1][offset+6] = f'=IF($A{r}="";"";IF(AND({c}$13<=TODAY();\'Посещения\'!{c}{bot}="Y");IF(LEN($C{r})=0;"нет тарифа";$C{r});0))'
     return v
 
 
@@ -197,7 +215,7 @@ def actual_values(capacity, limit, purchase_rows):
     v[3][:6] = ['Месяц', 'Куплено', 'Посещений', 'Доход, ₽', 'Аренда, ₽', 'Прибыль, ₽']
     for m, (name, _, _) in enumerate(months()):
         c = 7+5*m
-        v[4+m][:6] = [name]+[f'=SUM({col(c+i)}{FIRST}:{col(c+i)}{end})' for i in [0, 2, 1, 3, 4]]
+        v[4+m][:6] = [name]+[f'=SUM({col(c+i)}{FIRST}:{col(c+i)}{end})' for i in [0, 2, 1, 3]]+[f'=D{5+m}-E{5+m}']
         v[12][c-1] = name
         v[13][c-1:c+4] = ['Куплено', 'Доход, ₽', 'Посещений', 'Аренда, ₽', 'Прибыль, ₽']
         for i in range(5):
@@ -215,10 +233,10 @@ def actual_values(capacity, limit, purchase_rows):
             bought, income, visits, rent = [col(base+i)+str(r) for i in range(4)]
             v[r-1][base-1:base+4] = [
                 f'=IF($A{r}="";"";SUMIF(\'Покупки тарифов\'!$B$3:$B${purchase_rows};$A{r};\'Покупки тарифов\'!${col(161+m)}$3:${col(161+m)}${purchase_rows}))',
-                f'=IF($A{r}="";"";IF({bought}=0;0;IF($C{r}="";"нет тарифа";{bought}*$C{r})))',
-                f'=IF($A{r}="";"";COUNTIF(\'Посещения_bot\'!{col(7+offset)}{bot}:{col(6+offset+count)}{bot};"Y"))',
+                f'=IF($A{r}="";"";IF({bought}=0;0;IF(LEN($C{r})=0;"нет тарифа";{bought}*$C{r})))',
+                f'=IF($A{r}="";"";COUNTIFS(\'Номинальная доходность\'!{col(7+offset)}$13:{col(6+offset+count)}$13;"<="&TODAY();\'Посещения\'!{col(7+offset)}{bot}:{col(6+offset+count)}{bot};"Y"))',
                 f'=IF($A{r}="";"";{visits}*600)',
-                f'=IF($A{r}="";"";IF(ISNUMBER({income});{income}-{rent};"нет тарифа"))']
+                f'=IF($A{r}="";"";N({income})-{rent})']
     return v
 
 
@@ -276,24 +294,25 @@ def report_style(sheet, rows, columns, nominal, used):
 def reports(book, capacity, limit, purchase_rows, used):
     for title, values, nominal in [('Номинальная доходность', nominal_values(capacity, limit), True),
                                    ('Фактическая прибыль', actual_values(capacity, limit, purchase_rows), False)]:
-        sheet = reset(book, title, len(values), len(values[0]))
-        book.batch_update({'requests': [write(sheet.id, 0, 0, values)]})
-        book.batch_update({'requests': report_style(sheet, len(values), len(values[0]), nominal, used)})
+        sheet, created = existing_view(book, title, len(values), len(values[0]))
+        write_calculations(sheet, values)
+        if created:
+            book.batch_update({'requests': report_style(sheet, len(values), len(values[0]), nominal, used)})
 
 
 def run(book, capacity, limit):
     """Last 30 days consistently, plus transparent direct tariff lookup."""
-    tech = reset(book, 'Аналитика_тех', capacity, 10)
+    tech, _ = existing_view(book, 'Аналитика_тех', capacity, 10)
     t = [['ID', 'ФИО', 'Последние 30 дней', '30–59 дней назад', 'Тариф', 'flag_active',
           'Перестали ходить', 'Телеграм', 'Номер active', 'Номер паузы']]
     for r, bot in enumerate(range(3, capacity+1), 2):
-        date_values = 'IFERROR(DATEVALUE(\'Посещения_bot\'!$G$1:$FC$1);0)'
-        counts = lambda a, b: f'=IF(A{r}="";"";SUMPRODUCT(N({date_values}>=TODAY()-{a});N({date_values}<=TODAY()-{b});N(\'Посещения_bot\'!G{bot}:FC{bot}="Y")))'
-        t.append([f'=IF(\'Посещения_bot\'!A{bot}="";"";\'Посещения_bot\'!A{bot})',
-            f'=IF(A{r}="";"";\'Посещения_bot\'!C{bot})', counts(29, 0), counts(59, 30), lookup(f'A{r}', limit),
+        date_values = 'IFERROR(DATEVALUE(\'Посещения\'!$G$1:$FC$1);0)'
+        counts = lambda a, b: f'=IF(A{r}="";"";SUMPRODUCT(N({date_values}>=TODAY()-{a});N({date_values}<=TODAY()-{b});N(\'Посещения\'!G{bot}:FC{bot}="Y")))'
+        t.append([f'=IF(\'Посещения\'!A{bot}="";"";\'Посещения\'!A{bot})',
+            f'=IF(A{r}="";"";\'Посещения\'!C{bot})', counts(29, 0), counts(59, 30), lookup(f'A{r}', limit),
             f'=IF(A{r}="";"";IF(C{r}>0;"active";""))',
             f'=IF(A{r}="";"";IF(AND(D{r}>=2;C{r}=0);"перестал(а) ходить";""))',
-            f'=IF(A{r}="";"";\'Посещения_bot\'!D{bot})',
+            f'=IF(A{r}="";"";\'Посещения\'!D{bot})',
             f'=IF(F{r}="active";COUNTIF(F$2:F{r};"active");"")',
             f'=IF(G{r}<>"";COUNTIF(G$2:G{r};"перестал(а) ходить");"")'])
     book.batch_update({'requests': [write(tech.id, 0, 0, t),
@@ -303,7 +322,7 @@ def run(book, capacity, limit):
     except gspread.WorksheetNotFound:
         sheet = book.worksheet('Аналитика клиентов')
         sheet.update_title('RUN')
-    sheet = reset(book, 'RUN', capacity+5, 13)
+    sheet, created = existing_view(book, 'RUN', capacity+5, 13)
     v = [['']*13 for _ in range(capacity+5)]
     v[0][0], v[0][8] = 'RUN · активные за последние 30 дней', 'Клиенты перестали ходить'
     v[1][0] = '=TEXT(TODAY()-29;"dd.mm.yyyy")&" — "&TEXT(TODAY();"dd.mm.yyyy")'
@@ -333,40 +352,46 @@ def run(book, capacity, limit):
                      fmt(rg(sheet.id,r,r+1,a,b), wrapStrategy='WRAP')]
     for i, width in enumerate((75,260,145,120,110,150,145,25,75,250,130,130,185)):
         requests.append(dim(sheet.id, 'COLUMNS', i, i+1, pixelSize=width))
-    book.batch_update({'requests': requests})
+    if created:
+        book.batch_update({'requests': requests})
+    else:
+        write_calculations(sheet, v)
 
 
-def setup_views(book):
-    source_sheet = book.worksheet('Посещения_bot')
+def setup_views(book, reconcile=True):
+    from attendance_sync import workbook_lock
+    with workbook_lock():
+        return _setup_views_locked(book, reconcile)
+
+
+def _setup_views_locked(book, reconcile):
+    if reconcile:
+        mirror(book)
+    from finance_roster import sync_roster as append_people, refresh_input_formulas
+    append_people(book)
+    source_sheet = book.worksheet('Посещения')
     capacity = max(200, source_sheet.row_count)
     if source_sheet.row_count < capacity:
         source_sheet.resize(rows=capacity)
     tariffs = book.worksheet('Тарифы')
     ids = tariffs.get('A2:A'+str(tariffs.row_count), value_render_option='UNFORMATTED_VALUE')
-    seen = set()
-    for r in ids:
-        if not r or r[0] in ('', None):
-            continue
-        key = int(r[0])
-        if key in seen:
-            raise ValueError('Дублируется ID в Тарифы: '+str(key))
-        seen.add(key)
-    # Normalize ID type only; tariff values, names and trainer edits stay intact.
+    from finance_roster import keyed_rows
+    keyed_rows(ids, 0, 2)
+    # Normalize ID type, preserving all tariff inputs and notes.
     if ids:
         tariffs.update(values=[[int(r[0])] if r and r[0] not in ('',None) else [''] for r in ids],
                        range_name='A2:A'+str(len(ids)+1), raw=True)
     used = len(source_sheet.get('A3:A'+str(capacity)))
-    from google_sheet import _active_formula
-    source_sheet.update(values=[[_active_formula(r,'FC')] for r in range(3,used+3)],
-                        range_name='F3:F'+str(used+2), raw=False)
+    refresh_input_formulas(book, capacity)
     purchase_rows = purchase_totals(book, tariffs.row_count)
     run(book, capacity, tariffs.row_count)
     reports(book, capacity, tariffs.row_count, purchase_rows, used+2)
-    mirror(book)
+    from finance_roster import capacities, view_capacity_state
+    view_capacity_state(book.id, capacities(book))
 
 
 if __name__ == '__main__':
     from finance_sheet import _client
     from config import GOOGLE_SHEET_ID
     setup_views(_client().open_by_key(GOOGLE_SHEET_ID))
-    print('Updated: identical attendance, RUN, client-level nominal and actual profit.')
+    print('Updated attendance reconciliation, RUN and client-level financial reports.')

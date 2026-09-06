@@ -17,6 +17,7 @@ FLAG_HEADER = "flag_active"
 _task = None
 _dirty = False
 _missing_credentials_logged = False
+_sync_lock = asyncio.Lock()
 
 
 def sheet_url():
@@ -181,22 +182,13 @@ def _worksheet():
 
 
 def _sync_blocking(dates, rows):
+    from attendance_sync import reconcile_book, workbook_lock
     worksheet = _worksheet()
-    existing = worksheet.get_all_values(pad_values=False)
-    grid, adoptions = merge_grid(existing, dates, rows)
-    required_rows = max(len(grid), worksheet.row_count)
-    required_cols = max(len(grid[0]), worksheet.col_count)
-    if required_rows != worksheet.row_count or required_cols != worksheet.col_count:
-        worksheet.resize(rows=required_rows, cols=required_cols)
-    last = f"{_column_name(len(grid[0]))}{len(grid)}"
-    worksheet.update(values=grid, range_name=f"A1:{last}", raw=True)
-    if len(grid) > 2:
-        last_column = _column_name(len(grid[0]))
-        formulas = [[_active_formula(row, last_column)] for row in range(3, len(grid) + 1)]
-        worksheet.update(values=formulas, range_name=f"F3:F{len(grid)}", raw=False)
-    from finance_sheet import restore_attendance_copy
-    restore_attendance_copy(worksheet.spreadsheet)
-    return adoptions
+    with workbook_lock():
+        adoptions = reconcile_book(worksheet.spreadsheet, dates, rows)
+        from finance_views import sync_roster
+        sync_roster(worksheet.spreadsheet)
+        return adoptions
 
 
 def check_blocking():
@@ -213,6 +205,12 @@ def check_blocking():
 
 def export_workbook_xlsx():
     """Export the complete Google workbook, including trainer-owned sheets."""
+    from attendance_sync import workbook_lock
+    with workbook_lock():
+        return _export_workbook_xlsx_unlocked()
+
+
+def _export_workbook_xlsx_unlocked():
     from google.auth.transport.requests import AuthorizedSession
     from google.oauth2 import service_account
 
@@ -241,11 +239,14 @@ def export_workbook_xlsx():
 async def sync_now():
     import db
     import events
-    dates, rows = await events.summary()
-    adoptions = await asyncio.to_thread(_sync_blocking, dates, rows)
-    for participant_id, public_id in adoptions:
-        if not await db.adopt_public_id(participant_id, public_id):
-            log.error("Could not adopt Google Sheet participant ID %s", public_id)
+    # Read the next DB snapshot only after the previous sync has completed.
+    # A /table request and scheduled sync must not replay snapshots out of order.
+    async with _sync_lock:
+        dates, rows = await events.summary()
+        adoptions = await asyncio.to_thread(_sync_blocking, dates, rows)
+        for participant_id, public_id in adoptions:
+            if not await db.adopt_public_id(participant_id, public_id):
+                log.error("Could not adopt Google Sheet participant ID %s", public_id)
 
 
 async def _worker():

@@ -2,3 +2,4 @@
 7aacbf920c747f1eab9ee2cf25fe6cf90a55993cc4dbad2f4ffff4771989fff4  training-bot-update-2.4.4.sh
 18ae1c0ee761b5e45cb962c84c5ed342457dd8920a5b21ba1036b13224a0189d  training-bot-update-2.4.5.sh
 e0107028f9fd6a6271971dd7120fdb3ce7aa4ca05063d8fd7c05645081f3a493  training-bot-update-2.4.6.sh
+49752cd105cc56c170058dee0f4647c3e5b98df3befa3c30cae7ca0541943e13  training-bot-update-2.4.7.sh

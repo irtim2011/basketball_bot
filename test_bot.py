@@ -111,9 +111,11 @@ class DataTests(unittest.IsolatedAsyncioTestCase):
         sid=await self.slot()
         start=self.now+timedelta(hours=1)
         r=await events.response_for(self.pid,sid,start)
+        await db._c().execute('UPDATE responses SET message_id=123 WHERE id=?', (r['id'],))
+        await db._c().commit()
         callback=SimpleNamespace(id='query',data=f"r:{r['id']}:yes",answer=AsyncMock(),
             from_user=SimpleNamespace(id=999),
-            message=SimpleNamespace(answer=AsyncMock(),edit_text=AsyncMock()))
+            message=SimpleNamespace(message_id=123,answer=AsyncMock(),edit_text=AsyncMock()))
         await process_answer(callback)
         row=await (await db._c().execute('SELECT status FROM responses')).fetchone()
         self.assertEqual(row['status'],'pending')
@@ -131,7 +133,7 @@ class DataTests(unittest.IsolatedAsyncioTestCase):
         callback.data=f"r:{r['id']}:yes"
         await process_answer(callback)
         dates,rows=await events.summary()
-        self.assertEqual(rows[0]['marks']['2026-09-07'],'N')
+        self.assertEqual(rows[0]['marks']['2026-09-07'],'')
         callback.message.answer.assert_awaited_once()
 
     async def test_four_digit_ids_are_unique_and_survive_restart(self):

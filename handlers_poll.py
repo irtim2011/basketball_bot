@@ -32,7 +32,8 @@ async def process_answer(callback: CallbackQuery):
         slot['training_date'] == start.date().isoformat() if slot['training_date'] else slot['weekday'] == start.weekday())
     if valid and slot['starts_on'] and start.date().isoformat() < slot['starts_on']:
         valid = False
-    if not valid or utils.now() >= start:
+    if (row['is_cancelled'] or row['message_id'] != callback.message.message_id
+            or not valid or utils.now() >= start):
         await callback.message.answer('Этот опрос закрыт: тренировка уже началась, отменена или перенесена.')
         return
     await db._c().execute('UPDATE responses SET status=?, responded_at=? WHERE id=?',

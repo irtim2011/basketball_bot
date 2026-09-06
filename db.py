@@ -108,10 +108,18 @@ async def init_db():
             status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','yes','no')),
             message_id INTEGER,
             responded_at TEXT,
+            is_cancelled INTEGER NOT NULL DEFAULT 0,
             UNIQUE(participant_id, schedule_id, starts_at)
         );
     """)
+    response_columns = {r[1] for r in await (await _conn.execute("PRAGMA table_info(responses)")).fetchall()}
+    if "is_cancelled" not in response_columns:
+        await _conn.execute("ALTER TABLE responses ADD COLUMN is_cancelled INTEGER NOT NULL DEFAULT 0")
     await _conn.commit()
+    # Old deployments did not mark cancelled future sessions. Preserve completed
+    # history, but do not let a pending future intention become a visit later.
+    from events import cancel_invalid_future_responses
+    await cancel_invalid_future_responses()
 
 
 async def close_db():
@@ -268,7 +276,13 @@ async def register_participant(
 ) -> int:
     now = utils.now().isoformat()
     async with _participant_lock:
-        if preferred_public_id is None:
+        existing = await get_participant(existing_id) if existing_id is not None else None
+        already_registered = bool(existing and existing['is_registered'])
+        if already_registered:
+            # A profile correction changes contact details, never the key of an
+            # established participant or the owner of historical Sheet rows.
+            preferred_public_id = None
+        elif preferred_public_id is None:
             legacy = await find_legacy_identity(full_name, existing_id)
             if legacy is not None:
                 preferred_public_id = legacy['public_id']

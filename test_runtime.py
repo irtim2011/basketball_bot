@@ -111,12 +111,15 @@ class IngressTests(unittest.IsolatedAsyncioTestCase):
         async def document(*args,**kwargs):
             doc_started.set()
             await finish.wait()
-        message=SimpleNamespace(from_user=SimpleNamespace(id=123),answer=AsyncMock(),answer_document=document)
+        message=SimpleNamespace(from_user=SimpleNamespace(id=123),
+                                chat=SimpleNamespace(id=123,type='private'),
+                                answer=AsyncMock(),answer_document=document)
         state=SimpleNamespace(clear=AsyncMock())
         with tempfile.TemporaryDirectory() as tmp:
             target=Path(tmp)/'report.xlsx'
             target.write_bytes(b'test export')
-            with patch('handlers_trainer.events.summary',new=AsyncMock(return_value=([],[{}]))), \
+            with patch('handlers_trainer.TRAINER_IDS',{123}), \
+                 patch('handlers_trainer.events.summary',new=AsyncMock(return_value=([],[{}]))), \
                  patch('handlers_trainer.build_xlsx',return_value=str(target)), \
                  patch('handlers_trainer.google_sheet.configured',return_value=False):
                 await asyncio.wait_for(table(message,state),0.2)
@@ -131,11 +134,14 @@ class IngressTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_google_excel_upload_contains_full_workbook_export(self):
         from handlers_trainer import export_table
-        message=SimpleNamespace(answer=AsyncMock(),answer_document=AsyncMock())
+        message=SimpleNamespace(from_user=SimpleNamespace(id=123),
+                                chat=SimpleNamespace(id=123,type='private'),
+                                answer=AsyncMock(),answer_document=AsyncMock())
         with tempfile.TemporaryDirectory() as tmp:
             target=Path(tmp)/'full-google-workbook.xlsx'
             target.write_bytes(b'complete workbook')
-            with patch('handlers_trainer.google_sheet.configured',return_value=True), \
+            with patch('handlers_trainer.TRAINER_IDS',{123}), \
+                 patch('handlers_trainer.google_sheet.configured',return_value=True), \
                  patch('handlers_trainer.google_sheet.sync_now',new=AsyncMock()), \
                  patch('handlers_trainer.google_sheet.export_workbook_xlsx',return_value=str(target)):
                 await export_table(message)
