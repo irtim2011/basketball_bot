@@ -284,9 +284,9 @@ def _set_analytics(book):
              f'N(IFERROR(DATEVALUE(\'Посещения_bot\'!$G$1:$FC$1);0)<=TODAY());N(\'Посещения_bot\'!G{bot_row}:FC{bot_row}="Y")))'),
             (f'=IF(A{row}="";"";SUMPRODUCT(N(IFERROR(DATEVALUE(\'Посещения_bot\'!$G$1:$FC$1);0)>=TODAY()-59);'
              f'N(IFERROR(DATEVALUE(\'Посещения_bot\'!$G$1:$FC$1);0)<=TODAY()-30);N(\'Посещения_bot\'!G{bot_row}:FC{bot_row}="Y")))'),
-            f'=IF(A{row}="";"";IFNA(VLOOKUP(A{row};\'Тарифы\'!$A$2:$C$199;3;FALSE);""))',
+            f'=IF(A{row}="";"";IFNA(INDEX(\'Тарифы\'!$C$2:$C$199;MATCH(VALUE(A{row});INDEX(IFERROR(1*\'Тарифы\'!$A$2:$A$199;0);0);0));""))',
             f'=IF(A{row}="";"";IF(C{row}>0;"active";"inactive"))',
-            f'=IF(A{row}="";"";IF(AND(D{row}>=2;C{row}=0);"⚠️ возможная пауза";""))',
+            f'=IF(A{row}="";"";IF(AND(D{row}>=2;C{row}=0);"⚠️ перестал(а) ходить";""))',
             (f'=IF(A{row}="";"";SUMPRODUCT(N(IFERROR(DATEVALUE(\'Посещения_bot\'!$G$1:$FC$1);0)>=EOMONTH(TODAY();-1)+1);'
              f'N(IFERROR(DATEVALUE(\'Посещения_bot\'!$G$1:$FC$1);0)<=TODAY());N(\'Посещения_bot\'!G{bot_row}:FC{bot_row}="Y")))'),
         ])
@@ -301,7 +301,7 @@ def _set_analytics(book):
     nominal.batch_clear(["A13:K220"])
     nominal.update(values=[
         ["Активные клиенты — текущий месяц", "", "", "", "", "",
-         "Клиенты с возможной паузой"],
+         "Клиенты перестали ходить"],
         ["ID", "ФИО", "Посещений за месяц", "Тариф, ₽", "Посещения × тариф, ₽", "",
          "ID", "ФИО", "Посещений 30–59 дней назад", "Посещений за последние 30 дней", "Статус"],
     ], range_name="A14:K15", raw=True)
@@ -320,7 +320,7 @@ def _set_analytics(book):
     ]], range_name="A16:K16", raw=False)
     nominal.update(values=[[
         "Активный клиент: хотя бы одно посещение за последние 30 дней.", "", "", "", "", "",
-        "Риск паузы: 2+ посещения 30–59 дней назад и ни одного за последние 30 дней."
+        "Перестали ходить: 2+ посещения 30–59 дней назад и ни одного за последние 30 дней."
     ]], range_name="A13:G13", raw=True)
     requests = [
         _header_request(nominal.id, 13, 14, 0, 5),
@@ -683,9 +683,9 @@ def setup():
     _set_tariff_alert(book)
     directory = _set_client_directory(book, people)
     _set_purchase_matrix(book, people, directory)
-    _set_weekly_finance(book, "Фактическая прибыль", nominal=False)
-    _set_weekly_finance(book, "Номинальная доходность", nominal=True)
     _set_client_analytics(book)
+    _set_nominal_finance(book)
+    _set_monthly_profit(book)
     _seed_legacy_identities(people)
     restore_attendance_copy(book)
     return book
@@ -693,20 +693,142 @@ def setup():
 
 
 
+def _reset_view(book, title, rows, cols):
+    """Reset a derived view in place, preserving its sheet ID and removing stale tails."""
+    try:
+        sheet = book.worksheet(title)
+    except gspread.WorksheetNotFound:
+        sheet = book.add_worksheet(title=title, rows=rows, cols=cols)
+    metadata = book.fetch_sheet_metadata()
+    info = next(item for item in metadata['sheets'] if item['properties']['sheetId'] == sheet.id)
+    requests = []
+    for key in ('columnGroups', 'rowGroups'):
+        for group in reversed(info.get(key, [])):
+            requests.append({'deleteDimensionGroup': {'range': group['range']}})
+    for merged in info.get('merges', []):
+        requests.append({'unmergeCells': {'range': merged}})
+    for index in reversed(range(len(info.get('conditionalFormats', [])))):
+        requests.append({'deleteConditionalFormatRule': {'sheetId': sheet.id, 'index': index}})
+    for band in info.get('bandedRanges', []):
+        requests.append({'deleteBanding': {'bandedRangeId': band['bandedRangeId']}})
+    if info.get('basicFilter'):
+        requests.append({'clearBasicFilter': {'sheetId': sheet.id}})
+    requests.extend([
+        {'updateCells': {'range': {'sheetId': sheet.id}, 'fields':
+            'userEnteredValue,userEnteredFormat,dataValidation,note,textFormatRuns'}},
+        {'updateSheetProperties': {'properties': {'sheetId': sheet.id, 'hidden': False,
+            'gridProperties': {'rowCount': rows, 'columnCount': cols,
+                'frozenRowCount': 1, 'frozenColumnCount': 0}},
+            'fields': 'hidden,gridProperties'}},
+    ])
+    for dimension, count in [('ROWS', rows), ('COLUMNS', cols)]:
+        requests.append({'updateDimensionProperties': {'range': {'sheetId': sheet.id,
+            'dimension': dimension, 'startIndex': 0, 'endIndex': count},
+            'properties': {'hiddenByUser': False}, 'fields': 'hiddenByUser'}})
+    book.batch_update({'requests': requests})
+    return sheet
+
+
 def restore_attendance_copy(book):
     source = book.worksheet('Посещения_bot')
-    target = _sheet(book, 'Посещения', source.row_count, source.col_count)
-    book.batch_update({'requests': [
-        {'copyPaste': {'source': {'sheetId': source.id, 'startRowIndex': 0,
-            'endRowIndex': source.row_count, 'startColumnIndex': 0, 'endColumnIndex': source.col_count},
-            'destination': {'sheetId': target.id, 'startRowIndex': 0,
-            'endRowIndex': source.row_count, 'startColumnIndex': 0, 'endColumnIndex': source.col_count},
-            'pasteType': 'PASTE_NORMAL'}},
-        {'updateSheetProperties': {'properties': {'sheetId': target.id, 'hidden': False,
-            'gridProperties': {'frozenRowCount': 2, 'frozenColumnCount': 3}},
-            'fields': 'hidden,gridProperties(frozenRowCount,frozenColumnCount)'}},
-        _column_width(target.id, 2, 260),
-    ]})
+    values = source.get_all_values(pad_values=False)
+    if len(values) < 2 or values[0][:3] != ['ID участника', 'Telegram ID', 'ФИО']:
+        raise ValueError('Неожиданная структура источника посещений')
+    rows, cols = len(values), len(values[0])
+    target = _reset_view(book, 'Посещения', rows, cols)
+    source_range = {'sheetId': source.id, 'startRowIndex': 0, 'endRowIndex': rows,
+                    'startColumnIndex': 0, 'endColumnIndex': cols}
+    destination = dict(source_range, sheetId=target.id)
+    requests = [{'copyPaste': {'source': source_range, 'destination': destination,
+        'pasteType': kind}} for kind in ('PASTE_VALUES', 'PASTE_FORMAT')]
+    requests.append({'updateSheetProperties': {'properties': {'sheetId': target.id,
+        'gridProperties': {'frozenRowCount': 2, 'frozenColumnCount': 3}},
+        'fields': 'gridProperties(frozenRowCount,frozenColumnCount)'}})
+    for i, width in enumerate((85, 125, 270, 150, 150, 125)):
+        requests.append(_column_width(target.id, i, width))
+    book.batch_update({'requests': requests})
+
+
+def _month_spans():
+    import calendar
+    for month, label in zip(range(8, 13), ('Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь')):
+        first = date(2026, month, 1)
+        offset = (first - date(2026, 8, 1)).days
+        yield label + ' 2026', offset, calendar.monthrange(2026, month)[1]
+
+
+def _profit_colors(sheet_id, ranges):
+    return [{'addConditionalFormatRule': {'index': 0, 'rule': {'ranges': ranges,
+        'booleanRule': {'condition': {'type': condition, 'values': [{'userEnteredValue': '0'}]},
+        'format': {'backgroundColor': color}}}}}
+        for condition, color in [('NUMBER_LESS', PALE_RED), ('NUMBER_GREATER_THAN_EQ',
+            {'red': .86, 'green': .95, 'blue': .88})]]
+
+
+def _set_nominal_finance(book):
+    sheet = _reset_view(book, 'Номинальная доходность', 154, 12)
+    values = [['Дата', 'День', 'Доход, ₽', 'Посещений', 'Расход, ₽', 'Прибыль, ₽', '',
+               'Месяц', 'Доход, ₽', 'Посещений', 'Расход, ₽', 'Прибыль, ₽']]
+    for offset in range(153):
+        row, col = offset + 2, _column_name(offset + 7)
+        values.append([f'=DATE(2026;8;1)+{offset}', f'=TEXT(A{row};"ddd")',
+            f'=SUMPRODUCT(N(\'Посещения_bot\'!{col}$3:{col}$199="Y");\'Аналитика_тех\'!$E$2:$E$198)',
+            f'=COUNTIF(\'Посещения_bot\'!{col}$3:{col}$199;"Y")', f'=D{row}*600', f'=C{row}-E{row}'])
+    for index, (label, offset, count) in enumerate(_month_spans(), 1):
+        values[index] += [''] * (7 - len(values[index]))
+        values[index] += [label] + [f'=SUM({col}{offset+2}:{col}{offset+count+1})' for col in 'CDEF']
+    values[7] += [''] * (7-len(values[7]))
+    values[7] += ['ИТОГО ПО СЕКЦИИ'] + [f'=SUM({col}2:{col}6)' for col in 'IJKL']
+    sheet.update(values=values, range_name='A1:L154', raw=False)
+    requests = [_header_request(sheet.id, 0, 1, 0, 6), _header_request(sheet.id, 0, 1, 7, 12),
+                _header_request(sheet.id, 7, 8, 7, 12)]
+    colors = [{'red': .92, 'green': .96, 'blue': 1}, {'red': .94, 'green': .98, 'blue': .92}]
+    for index, (_, offset, count) in enumerate(_month_spans()):
+        requests.append({'repeatCell': {'range': {'sheetId': sheet.id, 'startRowIndex': offset+1,
+            'endRowIndex': offset+count+1, 'startColumnIndex': 0, 'endColumnIndex': 6},
+            'cell': {'userEnteredFormat': {'backgroundColor': colors[index%2]}},
+            'fields': 'userEnteredFormat.backgroundColor'}})
+    for index, width in enumerate((115, 75, 125, 105, 125, 135, 30, 210, 145, 110, 140, 155)):
+        requests.append(_column_width(sheet.id, index, width))
+    requests.extend([
+        {'repeatCell': {'range': {'sheetId': sheet.id, 'startRowIndex': 1,
+            'endRowIndex': 154, 'startColumnIndex': 0, 'endColumnIndex': 1},
+            'cell': {'userEnteredFormat': {'numberFormat': {'type': 'DATE', 'pattern': 'dd.mm.yyyy'}}},
+            'fields': 'userEnteredFormat.numberFormat'}},
+        {'repeatCell': {'range': {'sheetId': sheet.id, 'startRowIndex': 0, 'endRowIndex': 1},
+            'cell': {'userEnteredFormat': {'wrapStrategy': 'WRAP'}}, 'fields': 'userEnteredFormat.wrapStrategy'}},
+    ])
+    for start, end in [(2, 6), (8, 12)]:
+        requests.append({'repeatCell': {'range': {'sheetId': sheet.id, 'startRowIndex': 1,
+            'endRowIndex': 154, 'startColumnIndex': start, 'endColumnIndex': end},
+            'cell': {'userEnteredFormat': {'numberFormat': {'type': 'NUMBER', 'pattern': '#,##0'}}},
+            'fields': 'userEnteredFormat.numberFormat'}})
+    requests.extend(_profit_colors(sheet.id, [{'sheetId': sheet.id, 'startRowIndex': 1,
+        'endRowIndex': end, 'startColumnIndex': col, 'endColumnIndex': col+1} for col,end in [(5,154),(11,8)]]))
+    book.batch_update({'requests': requests})
+
+
+def _set_monthly_profit(book):
+    sheet = _reset_view(book, 'Фактическая прибыль', 8, 5)
+    values = [['Месяц', 'Доход по покупкам, ₽', 'Посещений', 'Аренда, ₽', 'Фактическая прибыль, ₽']]
+    for row, (label, offset, count) in enumerate(_month_spans(), 2):
+        income = '+'.join(f'SUMPRODUCT(\'Покупки тарифов\'!{_column_name(8+i)}$3:{_column_name(8+i)}$200;'
+            "'Покупки тарифов'!$F$3:$F$200)" for i in range(offset, offset+count))
+        first, last = _column_name(7+offset), _column_name(6+offset+count)
+        values.append([label, '='+income, f'=COUNTIF(\'Посещения_bot\'!{first}$3:{last}$199;"Y")',
+                       f'=C{row}*600', f'=B{row}-D{row}'])
+    values += [[], ['ИТОГО'] + [f'=SUM({col}2:{col}6)' for col in 'BCDE']]
+    sheet.update(values=values, range_name='A1:E8', raw=False)
+    requests = [_header_request(sheet.id, 0, 1, 0, 5), _header_request(sheet.id, 7, 8, 0, 5)]
+    for index, width in enumerate((185, 210, 120, 155, 230)):
+        requests.append(_column_width(sheet.id, index, width))
+    requests.append({'repeatCell': {'range': {'sheetId': sheet.id, 'startRowIndex': 1,
+        'endRowIndex': 8, 'startColumnIndex': 1, 'endColumnIndex': 5},
+        'cell': {'userEnteredFormat': {'numberFormat': {'type': 'NUMBER', 'pattern': '#,##0'}}},
+        'fields': 'userEnteredFormat.numberFormat'}})
+    requests.extend(_profit_colors(sheet.id, [{'sheetId': sheet.id, 'startRowIndex': 1,
+        'endRowIndex': 8, 'startColumnIndex': 4, 'endColumnIndex': 5}]))
+    book.batch_update({'requests': requests})
 
 if __name__ == "__main__":
     spreadsheet = setup()

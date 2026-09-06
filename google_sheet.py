@@ -194,6 +194,8 @@ def _sync_blocking(dates, rows):
         last_column = _column_name(len(grid[0]))
         formulas = [[_active_formula(row, last_column)] for row in range(3, len(grid) + 1)]
         worksheet.update(values=formulas, range_name=f"F3:F{len(grid)}", raw=False)
+    from finance_sheet import restore_attendance_copy
+    restore_attendance_copy(worksheet.spreadsheet)
     return adoptions
 
 
