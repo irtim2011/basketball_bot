@@ -130,7 +130,7 @@ class WizardGuard(BaseMiddleware):
     async def __call__(self, handler, callback, data):
         raw = callback.data or ''
         protected = raw.startswith(('cal:','date:','hour:','time:','repeat:','manual_select:','manual_page:','delete_confirm:','import:')) or raw in {
-            'hours','save_training','manual_confirm','open_import'}
+            'hours','save_training','manual_confirm','open_import','clear_schedule_confirm'}
         if protected:
             state = data.get('state')
             values = await state.get_data() if state else {}

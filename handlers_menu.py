@@ -93,6 +93,7 @@ async def show_schedule(message, user_id, page=0):
         rows.append(nav)
     if user_id in TRAINER_IDS:
         lines.append('Нажмите тренировку, чтобы изменить или удалить.')
+        rows.append([('🗑 Очистить расписание', 'clear_schedule')])
     await message.answer('\n\n'.join(lines), reply_markup=inline(rows) if rows else menu(user_id))
 
 @router.message(Command('schedule'))

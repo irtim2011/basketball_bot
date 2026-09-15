@@ -2,6 +2,8 @@ from interaction import ack
 import asyncio
 import os
 import re
+import logging
+import sqlite3
 from datetime import date, datetime
 from aiogram import Router, F
 from aiogram.filters import Command, BaseFilter
@@ -19,6 +21,7 @@ from interaction import WizardGuard, wizard_prompt, NAV
 import background
 import texts
 import google_sheet
+from schedule_clear import build_clear_plan, apply_clear_plan
 
 router = Router(name='trainer')
 
@@ -41,6 +44,66 @@ class Roster(StatesGroup):
 
 class Deletion(StatesGroup):
     confirm = State()
+
+class ClearSchedule(StatesGroup):
+    confirm = State()
+
+
+async def confirm_clear_screen(message, state, user_id):
+    await state.clear()
+    try:
+        plan = await build_clear_plan()
+    except (sqlite3.Error, OSError, RuntimeError):
+        logging.getLogger(__name__).exception('Could not preview schedule clear')
+        await message.answer('Не удалось прочитать расписание. Откройте /schedule и попробуйте ещё раз.')
+        return
+    if not plan['total']:
+        await message.answer('Будущих тренировок нет — очищать нечего.', reply_markup=menu(user_id))
+        return
+    await state.update_data(clear_schedule_plan=plan)
+    await state.set_state(ClearSchedule.confirm)
+    await wizard_prompt(message, state,
+        '🗑 Очистить всё расписание?\n\n'
+        f"Еженедельных серий: {plan['recurring']}.\nРазовых будущих тренировок: {plan['one_off']}.\n\n"
+        'Все будущие повторы прекратятся, опросы на эти тренировки закроются. '
+        'Чтобы возобновить тренировки, нужно будет добавить новое расписание.\n\n'
+        'История посещений, участники, тарифы и покупки сохранятся.',
+        reply_markup=inline([[('🗑 Да, очистить всё', 'clear_schedule_confirm')], [('Отмена', 'cancel')]]))
+
+
+@router.callback_query(F.data == 'clear_schedule')
+async def clear_schedule(callback: CallbackQuery, state: FSMContext):
+    await ack(callback)
+    await confirm_clear_screen(callback.message, state, callback.from_user.id)
+
+
+@router.callback_query(ClearSchedule.confirm, F.data == 'clear_schedule_confirm')
+async def clear_schedule_confirm(callback: CallbackQuery, state: FSMContext):
+    await ack(callback)
+    data = await state.get_data()
+    from scheduler import delivery_lock
+    if delivery_lock.locked():
+        await callback.message.answer('Дожидаюсь текущей отправки опросов, затем очищу расписание.')
+    try:
+        # Let any in-flight delivery finish, so no old poll is sent after success.
+        async with delivery_lock:
+            result = await apply_clear_plan(data['clear_schedule_plan'])
+    except ValueError as exc:
+        await callback.message.answer(str(exc))
+        await confirm_clear_screen(callback.message, state, callback.from_user.id)
+        return
+    except (sqlite3.Error, OSError, RuntimeError):
+        logging.getLogger(__name__).exception('Could not confirm schedule clear')
+        await state.clear()
+        await callback.message.answer('Не удалось подтвердить результат очистки. Откройте /schedule и проверьте текущее расписание.',
+                                      reply_markup=menu(callback.from_user.id))
+        return
+    await state.clear()
+    google_sheet.queue()
+    await callback.message.answer(
+        f"Расписание очищено. Убрано записей: {result['cleared']}.\nИстория посещений сохранена.\n\n"
+        'Добавьте тренировки через «➕ Тренировка» или «📋 Вставить расписание».',
+        reply_markup=menu(callback.from_user.id))
 
 async def start_editor(message, state, slot_id=None):
     await state.clear()

@@ -412,6 +412,26 @@ class RoutingTest(unittest.IsolatedAsyncioTestCase):
             await feed(callback='import:choose:add')
             await feed(callback='import:save')
             self.assertEqual(len(await db.list_schedule()), 3)
+            # Clear is a separate two-step trainer action, never an immediate wipe.
+            await feed('/schedule')
+            self.assertTrue(any(b.callback_data == 'clear_schedule'
+                                for row in sent[-1].reply_markup.inline_keyboard for b in row))
+            await feed(callback='clear_schedule', uid=2)
+            self.assertEqual(len(await db.list_schedule()), 3)
+            await feed(callback='clear_schedule_confirm', uid=2)
+            self.assertEqual(len(await db.list_schedule()), 3)
+            await feed(callback='clear_schedule')
+            clear_ui = latest_ui[1]
+            self.assertEqual(len(await db.list_schedule()), 3)
+            await feed('/cancel')
+            await feed(callback='clear_schedule_confirm', message_id=clear_ui)
+            self.assertEqual(len(await db.list_schedule()), 3)
+            await feed(callback='clear_schedule')
+            await feed(callback='clear_schedule_confirm')
+            self.assertEqual(len(await db.list_schedule()), 0)
+            self.assertIsNotNone(await db.get_participant_by_telegram_id(1))
+            await feed(callback='clear_schedule_confirm')
+            self.assertEqual(len(await db.list_schedule()), 0)
         finally:
             await background.close()
             await dp.storage.close()
