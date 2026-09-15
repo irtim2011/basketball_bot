@@ -13,9 +13,10 @@ NAV = {
     '0':'menu','📋 Показать действия':'menu','Отмена':'cancel',
     '➕ Тренировка':'training','📅 Расписание':'schedule','👥 Участники':'participants',
     '➕ Участник':'add','📊 Таблица':'table','👤 Мой профиль':'profile','📣 Опрос сейчас':'poll_now',
+    '📋 Вставить расписание':'import_schedule',
 }
 COMMANDS = {'menu','help','cancel','start','training','add_schedule','schedule','participants',
-            'add','table','profile','id','poll_now','version'}
+            'add','table','profile','id','poll_now','version','import_schedule'}
 ALIASES = {'help':'menu','add_schedule':'training'}
 
 def navigation(update):
@@ -128,8 +129,8 @@ async def wizard_prompt(message, state, text, reply_markup=None):
 class WizardGuard(BaseMiddleware):
     async def __call__(self, handler, callback, data):
         raw = callback.data or ''
-        protected = raw.startswith(('cal:','date:','hour:','time:','repeat:','manual_select:','manual_page:','delete_confirm:')) or raw in {
-            'hours','save_training','manual_confirm'}
+        protected = raw.startswith(('cal:','date:','hour:','time:','repeat:','manual_select:','manual_page:','delete_confirm:','import:')) or raw in {
+            'hours','save_training','manual_confirm','open_import'}
         if protected:
             state = data.get('state')
             values = await state.get_data() if state else {}

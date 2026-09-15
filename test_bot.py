@@ -258,7 +258,7 @@ class RoutingTest(unittest.IsolatedAsyncioTestCase):
         from aiogram.fsm.storage.memory import SimpleEventIsolation
         from aiogram.types import Message, Update
         from config import TRAINER_IDS
-        import handlers_menu, handlers_trainer, handlers_poll, handlers_registration, handlers_manual
+        import handlers_menu, handlers_trainer, handlers_poll, handlers_registration, handlers_manual, handlers_import
         import interaction, background
         old_trainers=set(TRAINER_IDS)
         TRAINER_IDS.clear()
@@ -381,6 +381,37 @@ class RoutingTest(unittest.IsolatedAsyncioTestCase):
             await feed(callback=f"delete_slot:{slots[0]['id']}")
             await feed(callback=f"delete_confirm:{slots[0]['id']}")
             self.assertIsNone(await events.get_slot(slots[0]['id']))
+            # A pasted list is a draft until confirmation; cancellations affect
+            # only missing occurrences, never all future days in a series.
+            weekly = await events.save_slot(day.weekday(), '19:30', starts_on=day.isoformat())
+            first = day-timedelta(days=1)
+            last = day+timedelta(days=2)
+            pasted = f'{first:%d.%m.%Y} 19:30–21:30\n{last:%d.%m.%Y} 20:00–22:00'
+            await feed('/import_schedule', uid=2)
+            await feed(pasted, uid=2)
+            self.assertEqual(len(await db.list_schedule()), 1)
+            await feed('📋 Вставить расписание')
+            await feed('31.02.2026 19:30')
+            self.assertEqual(len(await db.list_schedule()), 1)
+            await feed(pasted)
+            old_preview = latest_ui[1]
+            self.assertEqual(len(await db.list_schedule()), 1)
+            await feed(callback='import:choose:replace')
+            await feed(callback='import:save')
+            self.assertEqual(len(await db.list_schedule()), 3)
+            current = await events.get_slot(weekly)
+            excluded = utils.TZ.localize(datetime.fromisoformat(f'{day.isoformat()}T19:30'))
+            self.assertFalse(events.matches(current, excluded))
+            self.assertTrue(events.matches(current, excluded+timedelta(days=7)))
+            await feed(callback='import:save')
+            self.assertEqual(len(await db.list_schedule()), 3)
+            await feed('/import_schedule')
+            await feed(pasted)
+            await feed(callback='import:choose:replace', message_id=old_preview)
+            self.assertIn('предыдущего', next(m.text for m in reversed(sent) if hasattr(m,'text')))
+            await feed(callback='import:choose:add')
+            await feed(callback='import:save')
+            self.assertEqual(len(await db.list_schedule()), 3)
         finally:
             await background.close()
             await dp.storage.close()

@@ -17,6 +17,7 @@ import handlers_trainer
 import handlers_poll
 import handlers_registration
 import handlers_manual  # Registers handlers on the trainer router before it is attached.
+import handlers_import
 
 async def main():
     logging.basicConfig(level=logging.INFO)
@@ -46,6 +47,7 @@ async def main():
         try:
             await bot.set_my_commands(commands + [
                 BotCommand(command='training', description='Добавить тренировку'),
+                BotCommand(command='import_schedule', description='Вставить расписание текстом'),
                 BotCommand(command='participants', description='Участники рассылки'),
                 BotCommand(command='poll_now', description='Отправить опрос сейчас'),
                 BotCommand(command='table', description='Таблица посещаемости')],

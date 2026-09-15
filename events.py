@@ -1,10 +1,40 @@
 """Durable per-session delivery/response records; legacy history is retained."""
 from datetime import datetime, timedelta
+import json
 import db
 import utils
 
+def _slot_value(slot, name, default=None):
+    try:
+        return slot[name]
+    except (KeyError, IndexError):
+        return default
+
+
+def _slot_json(slot, name, kind):
+    value = _slot_value(slot, name)
+    try:
+        value = json.loads(value) if isinstance(value, str) else value
+    except (ValueError, TypeError) as exc:
+        raise ValueError('Некорректные исключения в расписании') from exc
+    if value is None:
+        return kind()
+    if not isinstance(value, kind):
+        raise ValueError('Некорректные исключения в расписании')
+    return value
+
+
+def end_time(slot, start):
+    """Return the occurrence-specific end time, falling back to the slot default."""
+    return _slot_json(slot, 'end_times', dict).get(
+        start.date().isoformat(), _slot_value(slot, 'end_time'))
+
+
 def matches(slot, start):
-    if not slot or slot['time'] != start.strftime('%H:%M'):
+    if (not slot or not _slot_value(slot, 'is_active', 1)
+            or slot['time'] != start.strftime('%H:%M')):
+        return False
+    if start.date().isoformat() in _slot_json(slot, 'excluded_dates', list):
         return False
     if slot['starts_on'] and start.date().isoformat() < slot['starts_on']:
         return False
@@ -28,6 +58,17 @@ async def cancel_invalid_future_responses(slot_id=None):
                  and not matches(slots.get(row['schedule_id']), datetime.fromisoformat(row['starts_at']))]
     if cancelled:
         await db._c().executemany("UPDATE responses SET is_cancelled=1 WHERE id=?", cancelled)
+    manual_sql = "SELECT id, schedule_id, starts_at FROM manual_polls WHERE status!='cancelled' AND datetime(starts_at)>datetime(?)"
+    manual_params = (now.isoformat(),)
+    if slot_id is not None:
+        manual_sql += ' AND schedule_id=?'
+        manual_params += (slot_id,)
+    manual = await (await db._c().execute(manual_sql, manual_params)).fetchall()
+    manual_cancelled = [(row['id'],) for row in manual
+                        if not matches(slots.get(row['schedule_id']), datetime.fromisoformat(row['starts_at']))]
+    if manual_cancelled:
+        await db._c().executemany("UPDATE manual_polls SET status='cancelled' WHERE id=?", manual_cancelled)
+    if cancelled or manual_cancelled:
         await db._c().commit()
 
 async def queue_manual(slot_id, start, trainer_id):
@@ -51,8 +92,11 @@ async def save_slot(weekday, time_str, training_date=None, slot_id=None, starts_
         raise ValueError("Такая тренировка уже есть")
     if slot_id:
         cur = await conn.execute(
-            "UPDATE schedule SET weekday=?, time=?, training_date=?, starts_on=? WHERE id=? AND is_active=1",
-            (weekday, time_str, training_date, starts_on, slot_id))
+            "UPDATE schedule SET weekday=?, time=?, training_date=?, starts_on=?, "
+            "end_time=CASE WHEN end_time<=? THEN NULL ELSE end_time END, "
+            "end_times=(SELECT json_group_object(key,value) FROM json_each(schedule.end_times) WHERE value>?) "
+            "WHERE id=? AND is_active=1",
+            (weekday, time_str, training_date, starts_on, time_str, time_str, slot_id))
         if not cur.rowcount:
             raise ValueError("Тренировка уже удалена")
     else:
@@ -73,7 +117,7 @@ async def delete_slot(slot_id):
     await db._c().commit()
     await cancel_invalid_future_responses(slot_id)
 
-def occurrences(slot, now, days=14):
+def occurrences(slot, now, days=366):
     if slot["training_date"]:
         dates = [datetime.fromisoformat(slot["training_date"]).date()]
     else:
@@ -87,7 +131,7 @@ def occurrences(slot, now, days=14):
             start = utils.TZ.localize(naive, is_dst=None)
         except Exception:
             continue  # Nonexistent or ambiguous DST occurrence.
-        if start > now:
+        if start > now and matches(slot, start):
             yield start
 
 async def response_for(participant_id, slot_id, start):

@@ -15,8 +15,9 @@ def date_label(day):
 def zone_label():
     return 'по Москве' if TIMEZONE == 'Europe/Moscow' else f'({TIMEZONE})'
 
-def when(start):
-    return f'📅 {WEEKDAY_RU[start.weekday()]}, {date_label(start)}\n🕒 Начало в {start:%H:%M} {zone_label()}'
+def when(start, end=None):
+    time = f'{start:%H:%M}–{end}' if end else f'Начало в {start:%H:%M}'
+    return f'📅 {WEEKDAY_RU[start.weekday()]}, {date_label(start)}\n🕒 {time} {zone_label()}'
 
 def next_start(slot, now=None):
     now = now or utils.now()
@@ -26,17 +27,28 @@ def next_start(slot, now=None):
     return next(events.occurrences(slot, now), None)
 
 def schedule_text(slot, start):
+    end = events.end_time(slot, start)
     if slot['training_date']:
-        return f'🏀 Разовая тренировка\n{when(start)}'
-    return (f'🔁 {WEEKLY[slot["weekday"]]}\n'
-            f'🕒 Начало в {slot["time"]} {zone_label()}\n'
+        return f'🏀 Разовая тренировка\n{when(start, end)}'
+    time = f'{slot["time"]}–{end}' if end else f'Начало в {slot["time"]}'
+    text = (f'🔁 {WEEKLY[slot["weekday"]]}\n'
+            f'🕒 {time} {zone_label()}\n'
             f'📅 Ближайшая: {date_label(start)}')
+    if end and start.date().isoformat() in events._slot_json(slot, 'end_times', dict):
+        text += '\nОкончание указано для ближайшей даты.'
+    excluded = [day for day in events._slot_json(slot, 'excluded_dates', list)
+                if day >= utils.today().isoformat()]
+    if excluded:
+        text += '\n❌ Отменены: ' + ', '.join(datetime.fromisoformat(day).strftime('%d.%m') for day in sorted(excluded)[:5])
+        if len(excluded) > 5:
+            text += f' и ещё {len(excluded)-5}'
+    return text
 
 def short_when(start):
     return f'{WEEKDAY_SHORT_RU[start.weekday()]}, {start.day} {MONTHS[start.month - 1]} в {start:%H:%M}'
 
-def poll_text(start, answer=None):
-    text = f'🏀 Собираемся на баскетбол!\n\n{when(start)}\n'
+def poll_text(start, answer=None, end=None):
+    text = f'🏀 Собираемся на баскетбол!\n\n{when(start, end)}\n'
     if answer is None:
         return text + '\n🔥 Пора размяться, прокачать бросок и сыграть с командой!\nТы с нами? Жми кнопку ниже 👇'
     if answer == 'yes':

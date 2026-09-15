@@ -42,7 +42,10 @@ CREATE TABLE IF NOT EXISTS schedule (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     weekday INTEGER NOT NULL,   -- 0=Monday .. 6=Sunday
     time TEXT NOT NULL,         -- 'HH:MM', training start time
-    is_active INTEGER NOT NULL DEFAULT 1
+    is_active INTEGER NOT NULL DEFAULT 1,
+    end_time TEXT,
+    excluded_dates TEXT NOT NULL DEFAULT '[]',
+    end_times TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS attendance (
@@ -90,6 +93,13 @@ async def init_db():
         await _conn.execute("ALTER TABLE schedule ADD COLUMN training_date TEXT")
     if "starts_on" not in columns:
         await _conn.execute("ALTER TABLE schedule ADD COLUMN starts_on TEXT")
+    for name, definition in (
+        ("end_time", "TEXT"),
+        ("excluded_dates", "TEXT NOT NULL DEFAULT '[]'"),
+        ("end_times", "TEXT NOT NULL DEFAULT '{}'"),
+    ):
+        if name not in columns:
+            await _conn.execute(f"ALTER TABLE schedule ADD COLUMN {name} {definition}")
     await _conn.executescript("""
         CREATE TABLE IF NOT EXISTS manual_polls (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

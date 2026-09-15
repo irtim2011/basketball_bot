@@ -86,7 +86,7 @@ async def select(callback: CallbackQuery,state:FSMContext):
     await state.update_data(selected=selected)
     await state.set_state(Manual.confirm)
     await wizard_prompt(callback.message,state,
-        f'🏀 Отправить опрос сейчас?\n{texts.when(start)}\n\n'
+        f'🏀 Отправить опрос сейчас?\n{texts.when(start, events.end_time(slot, start))}\n\n'
         f'Новых получателей: {count}. Уже отправленные опросы не дублируются.\n'
         'Состав рассылки проверяется ещё раз при отправке.',
         reply_markup=inline([[('📣 Отправить сейчас','manual_confirm'),('Отмена','cancel')]]))

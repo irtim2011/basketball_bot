@@ -31,7 +31,7 @@ async def deliver(bot,slot,start):
             continue
         try:
             message=await bot.send_message(p['telegram_id'],
-                texts.poll_text(start),
+                texts.poll_text(start, end=events.end_time(current, start)),
                 reply_markup=inline([[('✅ Приду',f"r:{response['id']}:yes"),('❌ Не приду',f"r:{response['id']}:no")]]))
             await db._c().execute('UPDATE responses SET message_id=? WHERE id=?',(message.message_id,response['id']))
             await db._c().commit()

@@ -28,10 +28,7 @@ async def process_answer(callback: CallbackQuery):
         return
     start = datetime.fromisoformat(row['starts_at'])
     slot = await events.get_slot(row['schedule_id'])
-    valid = slot and slot['time'] == start.strftime('%H:%M') and (
-        slot['training_date'] == start.date().isoformat() if slot['training_date'] else slot['weekday'] == start.weekday())
-    if valid and slot['starts_on'] and start.date().isoformat() < slot['starts_on']:
-        valid = False
+    valid = events.matches(slot, start)
     if (row['is_cancelled'] or row['message_id'] != callback.message.message_id
             or not valid or utils.now() >= start):
         await callback.message.answer('Этот опрос закрыт: тренировка уже началась, отменена или перенесена.')
@@ -43,7 +40,7 @@ async def process_answer(callback: CallbackQuery):
     mark = '✅ Приду' if answer == 'yes' else '❌ Не приду'
     try:
         await callback.message.edit_text(
-            texts.poll_text(start, answer),
+            texts.poll_text(start, answer, end=events.end_time(slot, start)),
             reply_markup=inline([[('✅ Приду', f'r:{response_id}:yes'), ('❌ Не приду', f'r:{response_id}:no')]]))
     except TelegramBadRequest:
         pass
