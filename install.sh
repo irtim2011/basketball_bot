@@ -28,20 +28,22 @@ fi
 "$release/venv/bin/python" -m pip install --disable-pip-version-check -q -r "$release/requirements.txt"
 export ENV_FILE="$env_file"
 export DB_PATH="$app_root/data/training_bot.db"
-"$release/venv/bin/python" "$release/configure.py" --upgrade
 "$release/venv/bin/python" "$release/check_config.py"
 if [[ -f "$HOME/.config/training-bot/google-service-account.json" ]]; then
   "$release/venv/bin/python" "$release/check_google_sheet.py"
 else
   echo "Google Таблица подготовлена. Для подключения: training-bot google-connect /путь/к/ключу.json"
 fi
-(cd "$release" && GOOGLE_SYNC_DISABLED=1 "$release/venv/bin/python" -m unittest discover -p 'test_*.py' -q)
+(cd "$release" && GOOGLE_SYNC_DISABLED=1 POLL_OFFSET_MINUTES=1440 "$release/venv/bin/python" -m unittest discover -p 'test_*.py' -q)
 sudo -v
+settings_backup="$(mktemp "$app_root/backups/settings-before-2.5.0-XXXXXXXX.env")"
+cp "$env_file" "$settings_backup"
 previous="$(readlink -f "$app_root/current" || true)"
 was_active=0
 if systemctl is-active --quiet "$unit"; then was_active=1; fi
 restore() {
-  echo "Запуск не удался. Возвращаю прежнюю версию."
+    echo "Запуск не удался. Возвращаю прежнюю версию."
+    cp "$settings_backup" "$env_file"
   if [[ -n "$previous" && -d "$previous" ]]; then
     ln -sfn "$previous" "$app_root/current"
     if [[ "$was_active" == 1 ]]; then sudo systemctl restart "$unit" || true; fi
@@ -54,6 +56,7 @@ if [[ -n "$previous" && -d "$previous" ]]; then
 fi
 sudo systemctl stop "$unit" 2>/dev/null || true
 trap restore ERR
+"$release/venv/bin/python" "$release/configure.py" --upgrade
 "$release/venv/bin/python" "$release/process_guard.py" --stop-old
 if [[ -f "$DB_PATH" ]]; then
   "$release/venv/bin/python" "$release/backup.py" "$DB_PATH" "$app_root/backups"

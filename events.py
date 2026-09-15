@@ -70,6 +70,8 @@ async def cancel_invalid_future_responses(slot_id=None):
         await db._c().executemany("UPDATE manual_polls SET status='cancelled' WHERE id=?", manual_cancelled)
     if cancelled or manual_cancelled:
         await db._c().commit()
+    from planning import invalidate_future
+    await invalidate_future(now)
 
 async def queue_manual(slot_id, start, trainer_id):
     await db._c().execute(

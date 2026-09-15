@@ -203,6 +203,8 @@ def _apply(plan, cancel_missing, now):
         # carried processing across the start time. Explicit test clocks stay fixed.
         if _plan(current['entries'], snapshot, _now(supplied_now))['fingerprint'] != current['fingerprint']:
             raise ValueError(STALE)
+        from planning import cancel_invalid_future
+        cancel_invalid_future(conn, now)
         conn.commit()
         return result
     except BaseException:

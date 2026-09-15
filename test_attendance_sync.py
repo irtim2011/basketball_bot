@@ -265,7 +265,7 @@ class SyncOrderingTests(unittest.IsolatedAsyncioTestCase):
         entered, release = threading.Event(), threading.Event()
         calls = []
 
-        def blocking(dates, rows):
+        def blocking(dates, rows, plans):
             calls.append(rows)
             if len(calls) == 1:
                 entered.set()
@@ -274,6 +274,7 @@ class SyncOrderingTests(unittest.IsolatedAsyncioTestCase):
             return []
 
         with patch.object(google_sheet, '_sync_lock', asyncio.Lock()), \
+             patch('planning.snapshot', new_callable=AsyncMock, return_value={}), \
              patch('events.summary', new_callable=AsyncMock, side_effect=[(DAYS, ['old']), (DAYS, ['new'])]) as summary, \
              patch.object(google_sheet, '_sync_blocking', side_effect=blocking):
             first = asyncio.create_task(google_sheet.sync_now())

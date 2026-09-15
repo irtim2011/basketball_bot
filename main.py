@@ -15,6 +15,7 @@ from scheduler import setup_scheduler
 import handlers_menu
 import handlers_trainer
 import handlers_poll
+import handlers_planning
 import handlers_registration
 import handlers_manual  # Registers handlers on the trainer router before it is attached.
 import handlers_import
@@ -36,6 +37,7 @@ async def main():
     dp.include_router(handlers_menu.router)
     dp.include_router(handlers_trainer.router)
     dp.include_router(handlers_poll.router)
+    dp.include_router(handlers_planning.router)
     dp.include_router(handlers_registration.router)
     dp.include_router(handlers_menu.fallback)
     commands = [BotCommand(command=k, description=v) for k, v in [

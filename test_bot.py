@@ -75,7 +75,7 @@ class DataTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_edit_and_cancel_take_effect(self):
         sid=await self.slot()
-        await events.save_slot(0,'22:00','2026-09-07',sid)
+        await events.save_slot(2,'22:00','2026-09-09',sid)
         bot=SimpleNamespace(send_message=AsyncMock())
         await tick(bot)
         bot.send_message.assert_not_awaited()
@@ -124,6 +124,7 @@ class DataTests(unittest.IsolatedAsyncioTestCase):
         dates,rows=await events.summary()
         self.assertEqual(rows[0]['marks']['2026-09-07'],'Y')
         callback.data=f"r:{r['id']}:no"
+        callback.id='query-no'
         with patch('handlers_poll.google_sheet.queue') as queue:
             await process_answer(callback)
             queue.assert_called_once_with()

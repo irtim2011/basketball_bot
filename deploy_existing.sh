@@ -17,9 +17,10 @@ release="$(mktemp -d "$app_root/releases/release-XXXXXXXX")"
 cp "$source_dir/"*.py "$source_dir/"requirements.txt "$source_dir/"manage.sh "$source_dir/"deploy_existing.sh "$release/"
 ln -s "$previous/venv" "$release/venv"
 "$release/venv/bin/python" "$release/check_config.py"
-(cd "$release" && GOOGLE_SYNC_DISABLED=1 "$release/venv/bin/python" -m unittest discover -p 'test_*.py' -q)
+(cd "$release" && GOOGLE_SYNC_DISABLED=1 POLL_OFFSET_MINUTES=1440 "$release/venv/bin/python" -m unittest discover -p 'test_*.py' -q)
 "$release/venv/bin/python" "$release/check_google_sheet.py"
-backup="$(mktemp -d "$app_root/backups/deploy-2.4.9-XXXXXXXX")"
+backup="$(mktemp -d "$app_root/backups/deploy-2.5.0-XXXXXXXX")"
+cp "$ENV_FILE" "$backup/bot.env"
 "$release/venv/bin/python" "$release/backup.py" "$DB_PATH" "$backup"
 (cd "$release" && "$release/venv/bin/python" - "$backup" <<'PY'
 import sys, shutil
@@ -35,6 +36,7 @@ old_pid="$(systemctl show "$unit" -p MainPID --value)"
 kill -0 "$old_pid"
 rollback() {
     trap - ERR
+    cp "$backup/bot.env" "$ENV_FILE"
     ln -sfn "$previous" "$app_root/current"
     current_pid="$(systemctl show "$unit" -p MainPID --value)"
     if [[ "$current_pid" =~ ^[1-9][0-9]*$ ]]; then kill -KILL "$current_pid" || true; fi
@@ -42,6 +44,7 @@ rollback() {
     exit 1
 }
 trap rollback ERR
+"$release/venv/bin/python" "$release/configure.py" --upgrade
 ln -sfn "$release" "$app_root/current"
 kill -USR1 "$old_pid"
 new_pid=0
@@ -54,6 +57,6 @@ done
 sleep 8
 systemctl is-active --quiet "$unit"
 [[ "$(systemctl show "$unit" -p MainPID --value)" == "$new_pid" ]]
-[[ "$(cat "$release/version.py")" == "VERSION = '2.4.9'" ]]
+[[ "$(cat "$release/version.py")" == "VERSION = '2.5.0'" ]]
 trap - ERR
 printf 'release=%s\nold_pid=%s\nnew_pid=%s\nbackup=%s\n' "$release" "$old_pid" "$new_pid" "$backup"

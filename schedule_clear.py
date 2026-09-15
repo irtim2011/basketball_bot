@@ -70,6 +70,8 @@ def _apply(plan, supplied_now):
                          (slot_id, now.isoformat()))
         if _plan(snapshot, _now(supplied_now))['fingerprint'] != current['fingerprint']:
             raise ValueError(STALE)
+        from planning import cancel_invalid_future
+        cancel_invalid_future(conn, now)
         conn.commit()
         return result
     except BaseException:

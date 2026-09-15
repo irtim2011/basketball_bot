@@ -56,7 +56,7 @@ def missing_people(attendance, tariff_rows, directory_rows):
             directory_new.append([
                 f'{row[2]} · ID {pid} · {row[3] or "без Telegram"}', pid,
                 row[2], row[1], row[3], row[4], '',
-                'проверьте ФИО' if len(str(row[2]).split()) < 3 else 'готово'])
+                'проверьте ФИО' if len(str(row[2]).split()) < 3 else 'готово', 'A'])
     return tariff_new, directory_new
 
 
@@ -64,17 +64,54 @@ def _last_row(rows, width):
     return max((i+2 for i, row in enumerate(rows) if any(v not in ('', None) for v in row[:width])), default=1)
 
 
+def ensure_tier(book):
+    """Initialize Tier exactly when its header is introduced, never refill blanks."""
+    sheet = book.worksheet('Справочник_клиентов')
+    existing = sheet.get('I1', value_render_option='UNFORMATTED_VALUE') if sheet.col_count >= 9 else []
+    title = str(existing[0][0]).strip() if existing and existing[0] else ''
+    if title == 'Tier':
+        return False
+    if title:
+        raise ValueError('В столбце I справочника уже есть данные: заголовок не Tier')
+    ids = sheet.get(f'B2:B{sheet.row_count}', value_render_option='UNFORMATTED_VALUE')
+    positions = keyed_rows(ids, 0, 2)
+    if sheet.col_count < 9:
+        sheet.resize(cols=9)
+    # One Sheets batch introduces both header and defaults. A lost successful
+    # response is safe: the next run sees Tier and preserves trainer corrections.
+    requests = [{'updateCells': {'start': {'sheetId': sheet.id, 'rowIndex': 0, 'columnIndex': 8},
+                 'rows': [{'values': [{'userEnteredValue': {'stringValue': 'Tier'}}]}],
+                 'fields': 'userEnteredValue'}}]
+    for row in positions.values():
+        requests.append({'updateCells': {'start': {'sheetId': sheet.id, 'rowIndex': row-1, 'columnIndex': 8},
+                         'rows': [{'values': [{'userEnteredValue': {'stringValue': 'A'}}]}],
+                         'fields': 'userEnteredValue'}})
+    requests.extend([
+        {'repeatCell': {'range': {'sheetId': sheet.id, 'startRowIndex': 0, 'endRowIndex': 1,
+                                  'startColumnIndex': 8, 'endColumnIndex': 9},
+                        'cell': {'userEnteredFormat': {'backgroundColor': {'red': .047, 'green': .4, 'blue': .188},
+                            'textFormat': {'bold': True, 'foregroundColor': {'red': 1, 'green': 1, 'blue': 1}}}},
+                        'fields': 'userEnteredFormat'}},
+        {'updateDimensionProperties': {'range': {'sheetId': sheet.id, 'dimension': 'COLUMNS',
+                                                 'startIndex': 8, 'endIndex': 9},
+                                        'properties': {'pixelSize': 80}, 'fields': 'pixelSize'}},
+    ])
+    book.batch_update({'requests': requests})
+    return True
+
+
 def sync_roster(book):
     from finance_views import lookup
     attendance = book.worksheet('Посещения').get_all_values(pad_values=False)
     tariff = book.worksheet('Тарифы')
     directory = book.worksheet('Справочник_клиентов')
+    ensure_tier(book)
     tariffs = tariff.get(f'A2:E{tariff.row_count}', value_render_option='UNFORMATTED_VALUE')
-    people = directory.get(f'A2:H{directory.row_count}', value_render_option='UNFORMATTED_VALUE')
+    people = directory.get(f'A2:I{directory.row_count}', value_render_option='UNFORMATTED_VALUE')
     new_tariffs, new_people = missing_people(attendance, tariffs, people)
     added = False
     for sheet, previous, width, additions in [(tariff, tariffs, 5, new_tariffs),
-                                             (directory, people, 8, new_people)]:
+                                             (directory, people, 9, new_people)]:
         if not additions:
             continue
         first = _last_row(previous, width)+1

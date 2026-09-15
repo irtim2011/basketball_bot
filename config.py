@@ -24,7 +24,7 @@ GOOGLE_CREDENTIALS_FILE = os.path.expanduser(os.getenv(
 GOOGLE_SYNC_DISABLED = os.getenv("GOOGLE_SYNC_DISABLED", "").strip() == "1"
 
 # How many minutes before training the poll should be sent
-POLL_OFFSET_MINUTES = int(os.getenv("POLL_OFFSET_MINUTES", "180"))
+POLL_OFFSET_MINUTES = int(os.getenv("POLL_OFFSET_MINUTES", "1440"))
 if not 1 <= POLL_OFFSET_MINUTES <= 10080:
     raise ValueError('POLL_OFFSET_MINUTES must be between 1 and 10080')
 

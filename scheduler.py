@@ -85,6 +85,10 @@ async def tick(bot):
                     continue
                 if start-timedelta(minutes=POLL_OFFSET_MINUTES)<=now<start:
                     await deliver(bot,slot,start)
+        # Planning has its own durable answers and never enters attendance.
+        # The same lock prevents deliveries racing trainer schedule changes.
+        import planning
+        await planning.deliver_due(bot, utils.now())
 
 def kick(bot):
     background.start('delivery',lambda: tick(bot))

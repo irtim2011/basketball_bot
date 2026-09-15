@@ -181,13 +181,16 @@ def _worksheet():
     return client.open_by_key(GOOGLE_SHEET_ID).worksheet(GOOGLE_SHEET_NAME)
 
 
-def _sync_blocking(dates, rows):
+def _sync_blocking(dates, rows, plans=None):
     from attendance_sync import reconcile_book, workbook_lock
     worksheet = _worksheet()
     with workbook_lock():
         adoptions = reconcile_book(worksheet.spreadsheet, dates, rows)
         from finance_views import sync_roster
         sync_roster(worksheet.spreadsheet)
+        if plans is not None:
+            from planning_sheet import sync_views
+            sync_views(worksheet.spreadsheet, plans)
         return adoptions
 
 
@@ -243,7 +246,9 @@ async def sync_now():
     # A /table request and scheduled sync must not replay snapshots out of order.
     async with _sync_lock:
         dates, rows = await events.summary()
-        adoptions = await asyncio.to_thread(_sync_blocking, dates, rows)
+        import planning
+        plans = await planning.snapshot()
+        adoptions = await asyncio.to_thread(_sync_blocking, dates, rows, plans)
         for participant_id, public_id in adoptions:
             if not await db.adopt_public_id(participant_id, public_id):
                 log.error("Could not adopt Google Sheet participant ID %s", public_id)

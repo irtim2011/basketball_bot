@@ -130,6 +130,8 @@ async def init_db():
     # history, but do not let a pending future intention become a visit later.
     from events import cancel_invalid_future_responses
     await cancel_invalid_future_responses()
+    from planning import init_schema
+    await init_schema()
 
 
 async def close_db():
