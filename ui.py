@@ -12,7 +12,7 @@ def menu(user_id):
     rows = [["📅 Расписание", "👤 Мой профиль"], ["📋 Показать действия"]]
     if user_id in TRAINER_IDS:
         rows = [["➕ Тренировка", "📅 Расписание"], ["📋 Вставить расписание"], ["👥 Участники", "➕ Участник"],
-                ["📣 Опрос сейчас", "📊 Таблица"], ["👤 Мой профиль", "📋 Показать действия"]]
+                ["📣 Опрос сейчас", "📊 Таблица"], ["🧪 Проверить 3 опроса"], ["👤 Мой профиль", "📋 Показать действия"]]
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=t) for t in row] for row in rows],
                                resize_keyboard=True, is_persistent=True)
 

@@ -14,9 +14,10 @@ NAV = {
     '➕ Тренировка':'training','📅 Расписание':'schedule','👥 Участники':'participants',
     '➕ Участник':'add','📊 Таблица':'table','👤 Мой профиль':'profile','📣 Опрос сейчас':'poll_now',
     '📋 Вставить расписание':'import_schedule',
+    '🧪 Проверить 3 опроса':'test_polls',
 }
 COMMANDS = {'menu','help','cancel','start','training','add_schedule','schedule','participants',
-            'add','table','profile','id','poll_now','version','import_schedule'}
+            'add','table','profile','id','poll_now','version','import_schedule','test_polls'}
 ALIASES = {'help':'menu','add_schedule':'training'}
 
 def navigation(update):

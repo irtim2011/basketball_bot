@@ -87,6 +87,8 @@ def _init(now):
     conn = _connection()
     try:
         conn.executescript(SCHEMA)
+        if 'early_scope' not in {r[1] for r in conn.execute('PRAGMA table_info(planned_polls)')}:
+            conn.execute('ALTER TABLE planned_polls ADD COLUMN early_scope TEXT')
         conn.execute('BEGIN IMMEDIATE')
         inserted = conn.execute("INSERT OR IGNORE INTO planning_meta VALUES ('enabled_at',?)", (occurrence_key(now),)).rowcount
         if inserted:
@@ -163,6 +165,8 @@ def _refresh_poll(conn, poll, now, slots=None, invalidate=True):
     existing = {row['occurrence_key']: dict(row) for row in conn.execute(
         'SELECT * FROM planned_answers WHERE poll_id=?', (poll['id'],))}
     for key, item in sessions.items():
+        if poll['early_scope'] and key != poll['early_scope']:
+            continue
         if datetime.fromisoformat(item['starts_at']) <= now:
             continue  # Never add a new retrospective question.
         old = existing.get(key)
@@ -187,6 +191,10 @@ def _prepare(now):
         enabled = datetime.fromisoformat(conn.execute(
             "SELECT value FROM planning_meta WHERE key='enabled_at'").fetchone()[0])
         slots = _slots(conn)
+        # At the real campaign date restore the full period and send its normal
+        # card. Early answers remain; other participants are never pre-polled.
+        conn.execute("UPDATE planned_polls SET early_scope=NULL,status='pending',message_id=NULL,lease_until=NULL,next_attempt_at=NULL "
+                     "WHERE early_scope IS NOT NULL AND datetime(due_at)<=datetime(?)", (now.isoformat(),))
         people = list(conn.execute('SELECT * FROM participants WHERE is_active=1 AND is_registered=1 AND telegram_id IS NOT NULL'))
         for kind, first, last, due in _periods(now):
             if not enabled <= due <= now:
@@ -466,9 +474,9 @@ def _snapshot(now):
         people = [dict(row) for row in conn.execute('SELECT * FROM participants ORDER BY id')]
         slots = _slots(conn)
         by_slot = {slot['id']: slot for slot in slots}
-        first = now.date().replace(day=1)
-        end = _next_month(_next_month(first))-timedelta(days=1)
-        recent = now-timedelta(days=30)
+        first = min(now.date().replace(day=1), date(2026, 8, 1))
+        end = date(now.year+1, 12, 31)
+        recent = utils.TZ.localize(datetime.combine(first, time.min))
         sessions = _sessions(slots, first, end)
         selected_answers = {}
         planned = conn.execute('SELECT pa.*,pp.participant_id,pp.kind,pp.period_start FROM planned_answers pa '
@@ -507,6 +515,10 @@ def _snapshot(now):
                         new_status=row['new_status'], changed_at=row['changed_at'])
                    for row in conn.execute("SELECT * FROM answer_change_log WHERE log_type='effective' "
                                            'AND datetime(occurrence_key)>=datetime(?) ORDER BY changed_at,id', (recent.isoformat(),))]
+        # Old answer records stay auditable, but do not become schedule entries.
+        scheduled_keys = set(_sessions(slots, first, end))
+        for key, session in sessions.items():
+            session['in_schedule'] = key in scheduled_keys
         return {'participants': people, 'sessions': [sessions[key] for key in sorted(sessions)],
                 'answers': [selected_answers[key][1] for key in sorted(selected_answers)],
                 'changes': changes, 'generated_at': now.isoformat(), 'enabled_at': enabled}
@@ -517,3 +529,28 @@ def _snapshot(now):
 
 async def snapshot(now=None):
     return await asyncio.to_thread(_snapshot, now)
+
+
+def _queue_early(participant_ids, schedule_id, start, now):
+    now, start = _now(now), _now(start)
+    with _transaction() as conn:
+        slot = conn.execute('SELECT * FROM schedule WHERE id=?', (schedule_id,)).fetchone()
+        if start <= now or not events.matches(slot, start):
+            raise ValueError('Тренировка изменилась или уже началась')
+        monday = start.date()-timedelta(days=start.weekday())
+        month = start.date().replace(day=1)
+        queued=0
+        for pid in participant_ids:
+            person=conn.execute('SELECT * FROM participants WHERE id=? AND is_registered=1 AND is_active=1',(pid,)).fetchone()
+            if not person:
+                continue
+            for kind,first,last in [('month',month,_next_month(month)-timedelta(days=1)),('week',monday,monday+timedelta(days=6))]:
+                due=utils.TZ.localize(datetime.combine(first-timedelta(days=1),time(12)))
+                queued += conn.execute('INSERT OR IGNORE INTO planned_polls(participant_id,kind,period_start,period_end,due_at,created_at,early_scope) '
+                    'VALUES (?,?,?,?,?,?,?)',(pid,kind,first.isoformat(),last.isoformat(),due.isoformat(),now.isoformat(),
+                    occurrence_key(start) if now < due else None)).rowcount
+        return queued
+
+
+async def queue_early(participant_ids, schedule_id, start, now=None):
+    return await asyncio.to_thread(_queue_early, participant_ids, schedule_id, start, now)

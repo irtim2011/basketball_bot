@@ -28,7 +28,7 @@ async def show_menu(message: Message, state: FSMContext):
         text += ('\n\nТренеру: добавляйте тренировки через календарь, управляйте '
                  'участниками, открывайте полную таблицу и скачивайте Excel кнопками ниже.\n'
                  '/training — добавить тренировку\n/import_schedule — вставить расписание текстом\n'
-                 '/participants — участники\n/poll_now — опрос сейчас\n/table — полная таблица и Excel')
+                 '/participants — участники\n/poll_now — опрос сейчас\n/test_polls — проверить 3 опроса на себе\n/table — полная таблица и Excel')
     await message.answer(text, reply_markup=menu(message.from_user.id))
 
 @router.callback_query(F.data == 'cancel')

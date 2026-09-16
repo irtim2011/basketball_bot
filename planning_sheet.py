@@ -167,6 +167,8 @@ def project(snapshot, tier_limit=500):
                 '', '', 'Ровно за сутки до старта', 'Последний ответ', 'До начала тренировки',
                 'Последние 10 переходов. Полный журнал хранит бот.', '']]
     for session in sessions:
+        if session.get('cancelled') or not session.get('in_schedule', True):
+            continue
         cutoff = instant(session['starts_at'])-timedelta(hours=24)
         count = [0]*6
         added, refused = [], []
@@ -328,6 +330,13 @@ def sync_views(book, snapshot):
     ensure_tier(book)
     directory = book.worksheet('Справочник_клиентов')
     projection = project(snapshot, directory.row_count)
+    import period_views
+    calendars = period_views.build(snapshot, directory.row_count)
+    projection.update(calendars)
+    # Sheets can cache unresolved references when a formula is written before
+    # its source tab exists. Always publish the backing data first.
+    projection = {period_views.DATA: calendars[period_views.DATA],
+                  **{k:v for k,v in projection.items() if k != period_views.DATA}}
     sheets = {sheet.title: sheet for sheet in book.worksheets()}
     total = 0
     for title, spec in projection.items():
@@ -342,12 +351,24 @@ def sync_views(book, snapshot):
             sheet.resize(rows=max(sheet.row_count, rows, old_rows), cols=max(sheet.col_count, cols, old_cols))
         area = f'A1:{_column(max(cols, old_cols))}{max(rows, old_rows)}'
         current = sheet.get(area, value_render_option='FORMULA')
+        calendar = spec['kind'] == 'calendar'
+        calendar_ready = previous.get('calendar_version') == 1
+        if calendar and calendar_ready:
+            # B1 belongs to the trainer, not to the background synchronizer.
+            chosen = _at(current, 0, 1)
+            values[0][1] = Formula(chosen) if str(chosen).startswith('=') else chosen
         updates, changed = _diff(sheet.id, current, values, old_rows, old_cols, rectangles)
         signature = hashlib.sha256(json.dumps(spec['layout']).encode()).hexdigest()
         pending = {'rows': max(rows, old_rows), 'cols': max(cols, old_cols),
-                   'rectangles': _rectangles(rectangles+[[rows, cols]]), 'layout': previous.get('layout')}
+                   'rectangles': _rectangles(rectangles+[[rows, cols]]), 'layout': previous.get('layout'),
+                   'calendar_version': previous.get('calendar_version'), 'options': previous.get('options')}
         _state(book.id, sheet.id, pending)
-        if created:
+        if spec['kind'] == 'raw':
+            if created:
+                updates.append({'updateSheetProperties': {'properties': {'sheetId': sheet.id, 'hidden': True}, 'fields': 'hidden'}})
+        elif calendar and not calendar_ready:
+            updates += period_views.style(sheet, spec)
+        elif created:
             updates += _style(sheet, spec)
         else:
             if spec['kind'] == 'matrix' and cols > old_cols:
@@ -357,7 +378,7 @@ def sync_views(book, snapshot):
         if spec['kind'] == 'details' and created:
             updates.append({'setBasicFilter': {'filter': {'range': {'sheetId': sheet.id,
                 'startRowIndex': 0, 'startColumnIndex': 0, 'endColumnIndex': cols}}}})
-        if spec['kind'] == 'matrix' and previous.get('layout') != signature:
+        if spec['kind'] in ('matrix', 'calendar') and previous.get('layout') != signature:
             metadata = book.fetch_sheet_metadata()
             info = next(s for s in metadata['sheets'] if s['properties']['sheetId'] == sheet.id)
             for group in reversed(info.get('columnGroups', [])):
@@ -374,12 +395,21 @@ def sync_views(book, snapshot):
                                                  'startColumnIndex': first_new, 'endColumnIndex': group['end']},
                         'cell': {'userEnteredFormat': {'backgroundColor': PALE[i % 2]}},
                         'fields': 'userEnteredFormat.backgroundColor'}})
+        if calendar:
+            if previous.get('options') != spec['options']:
+                updates.append({'setDataValidation': {'range': {'sheetId': sheet.id, 'startRowIndex': 0, 'endRowIndex': 1,
+                    'startColumnIndex': 1, 'endColumnIndex': 2}, 'rule': {'condition': {'type': 'ONE_OF_LIST',
+                    'values': [{'userEnteredValue': v} for v in spec['options']]}, 'strict': True, 'showCustomUi': True}}})
+            if not calendar_ready and cols < sheet.col_count:
+                updates.append({'updateDimensionProperties': {'range': {'sheetId': sheet.id, 'dimension': 'COLUMNS',
+                    'startIndex': cols, 'endIndex': sheet.col_count}, 'properties': {'hiddenByUser': True}, 'fields': 'hiddenByUser'}})
         # Re-read before changing values so a concurrent edit is never silently
         # overwritten by an old snapshot. Derived-cell changes will re-render on retry.
         if updates and sheet.get(area, value_render_option='FORMULA') != current:
             raise RuntimeError(f'Лист «{title}» изменился во время обновления; повторите синхронизацию')
         for first in range(0, len(updates), 400):
             book.batch_update({'requests': updates[first:first+400]})
-        _state(book.id, sheet.id, {'rows': rows, 'cols': cols, 'layout': signature})
+        _state(book.id, sheet.id, {'rows': rows, 'cols': cols, 'layout': signature,
+                                 'calendar_version': 1 if calendar else None, 'options': spec.get('options')})
         total += changed
     return {'sheets': list(projection), 'changed_cells': total}

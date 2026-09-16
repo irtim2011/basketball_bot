@@ -77,6 +77,28 @@ class PlanningTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.bot.send_message.await_count, 1)
         self.assertEqual((await planning.snapshot(self.when(21)))['enabled_at'], planning.occurrence_key(self.enabled))
 
+    async def test_early_poll_only_selected_person_and_session_then_normal_period(self):
+        start=utils.TZ.localize(datetime(2026,10,1,2))
+        sid=await self.slot('2026-10-01','02:00')
+        await self.slot('2026-10-02','19:30')
+        second=await db.register_participant(88,'second','Петров Петр Петрович','7654321')
+        await db.set_active(second,True)
+        self.assertEqual(await planning.queue_early([self.pid],sid,start,self.enabled),2)
+        self.assertEqual(await planning.queue_early([self.pid],sid,start,self.enabled),0)
+        await planning.deliver_due(self.bot,self.enabled)
+        self.assertEqual([m[0] for m in self.messages],[77,77])
+        polls=await self.rows('SELECT * FROM planned_polls')
+        for poll in polls:
+            rows=await self.rows('SELECT * FROM planned_answers WHERE poll_id=?',(poll['id'],))
+            self.assertEqual(len(rows),1)
+            self.assertEqual(rows[0]['schedule_id'],sid)
+        await planning.deliver_due(self.bot,self.when(30))
+        month=await self.rows("SELECT * FROM planned_polls WHERE participant_id=? AND kind='month'",(self.pid,))
+        self.assertIsNone(month[0]['early_scope'])
+        rows=await self.rows('SELECT * FROM planned_answers WHERE poll_id=?',(month[0]['id'],))
+        self.assertEqual(len(rows),2)
+        self.assertTrue(any(m[0]==88 for m in self.messages))
+
     async def test_first_enable_never_sends_preexisting_due_campaigns(self):
         await self.slot()
         later = self.when(20, 12, 1)
@@ -240,7 +262,7 @@ class PlanningTests(IsolatedAsyncioTestCase):
         await self.slot('2026-10-08')
         await self.slot('2026-11-05')
         snapshot = await planning.snapshot(self.when(20))
-        self.assertEqual([item['starts_at'][:10] for item in snapshot['sessions']], ['2026-10-08'])
+        self.assertEqual([item['starts_at'][:10] for item in snapshot['sessions']], ['2026-10-08','2026-11-05'])
         sid = await self.slot()
         await planning.deliver_due(self.bot, self.when(20))
         self.mock_now.return_value = self.when(23)

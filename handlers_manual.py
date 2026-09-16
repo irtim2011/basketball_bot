@@ -41,6 +41,12 @@ async def choose(message: Message, state: FSMContext):
     await state.set_state(Manual.choose)
     await choose_page(message,state,0)
 
+@router.message(Command('test_polls'))
+@router.message(F.text == '🧪 Проверить 3 опроса')
+async def choose_test(message: Message, state: FSMContext):
+    await choose(message, state)
+    await state.update_data(test_mode=True)
+
 async def choose_page(message,state,page):
     data=await state.get_data()
     options=data['options']
@@ -85,6 +91,15 @@ async def select(callback: CallbackQuery,state:FSMContext):
     count=sum(p['id'] not in sent_ids for p in people)
     await state.update_data(selected=selected)
     await state.set_state(Manual.confirm)
+    if data.get('test_mode'):
+        await wizard_prompt(callback.message,state,
+            f'🧪 Проверка трёх опросов\n{texts.when(start, events.end_time(slot,start))}\n\n'
+            'Опросы на месяц, неделю и основной будут отправлены сейчас только вам. '
+            'Нужна ваша регистрация /start и включённая рассылка. Ответы попадут в таблицу: '
+            'месяц/неделя — в планы, основной — в посещения. '
+            'В обычный срок придёт полный план периода. Повторная проверка не дублирует отправленные опросы.',
+            reply_markup=inline([[('🧪 Отправить мне','manual_confirm'),('Отмена','cancel')]]))
+        return
     await wizard_prompt(callback.message,state,
         f'🏀 Отправить опрос сейчас?\n{texts.when(start, events.end_time(slot, start))}\n\n'
         f'Новых получателей: {count}. Уже отправленные опросы не дублируются.\n'
@@ -94,12 +109,29 @@ async def select(callback: CallbackQuery,state:FSMContext):
 @router.callback_query(Manual.confirm,F.data=='manual_confirm')
 async def confirm(callback: CallbackQuery,state:FSMContext,bot):
     await ack(callback)
-    selected=(await state.get_data())['selected']
+    data=await state.get_data()
+    selected=data['selected']
     slot=await events.get_slot(selected['id'])
     start=datetime.fromisoformat(selected['start'])
     if not events.matches(slot,start) or start<=utils.now():
         await state.clear()
         await callback.message.answer('Тренировка изменилась или уже началась. Откройте /poll_now заново.')
+        return
+    if data.get('test_mode'):
+        import planning
+        from scheduler import delivery_lock, deliver
+        people=await db.get_active_registered_participants()
+        ids=[p['id'] for p in people if p['telegram_id']==callback.from_user.id]
+        if not ids:
+            await callback.message.answer('Сначала зарегистрируйтесь через /start и включите себя в рассылку.')
+            return
+        await state.clear()
+        async with delivery_lock:
+            await planning.queue_early(ids,slot['id'],start)
+            await planning.deliver_due(bot)
+            sent,skipped,failed,cancelled=await deliver(bot,slot,start,ids)
+        await callback.message.answer('Тестовые опросы поставлены на отправку. Проверьте новые сообщения и плановые листы.'
+            if not failed else 'Основной опрос не отправился. Нажмите проверку ещё раз; уже отправленные не повторятся.')
         return
     await events.queue_manual(slot['id'],start,callback.from_user.id)
     await state.clear()

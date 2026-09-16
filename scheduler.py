@@ -16,9 +16,11 @@ from ui import inline
 log = logging.getLogger(__name__)
 delivery_lock = asyncio.Lock()
 
-async def deliver(bot,slot,start):
+async def deliver(bot,slot,start,participant_ids=None):
     sent=skipped=failed=0
     for p in await db.get_active_registered_participants():
+        if participant_ids is not None and p['id'] not in participant_ids:
+            continue
         current=await events.get_slot(slot['id'])
         participant=await db.get_participant(p['id'])
         if not events.matches(current,start) or utils.now()>=start:

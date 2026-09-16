@@ -52,6 +52,7 @@ async def main():
                 BotCommand(command='import_schedule', description='Вставить расписание текстом'),
                 BotCommand(command='participants', description='Участники рассылки'),
                 BotCommand(command='poll_now', description='Отправить опрос сейчас'),
+                BotCommand(command='test_polls', description='Проверить 3 опроса на себе'),
                 BotCommand(command='table', description='Таблица посещаемости')],
                 scope=BotCommandScopeChat(chat_id=trainer_id))
         except TelegramBadRequest:

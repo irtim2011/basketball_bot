@@ -117,8 +117,8 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(overview(data)[3], 0)
         answer(data, 'month', 'yes')
         data['sessions'][0]['cancelled'] = True
-        self.assertEqual(overview(data)[1:7], [0]*6)
         result = view.project(data)
+        self.assertEqual(len(result[view.GENERAL]['values']), 2)
         self.assertEqual(result[view.MONTHLY]['values'][2][4], 'отменена')
 
     def test_matrix_separates_same_day_and_caps_at_next_month(self):
@@ -272,7 +272,7 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(book.sheets[0].values[1][8], 'B')
         self.assertEqual(book.sheets[0].values[2][8], '')
 
-    def test_growth_formats_only_new_columns_and_extends_conditional_rules(self):
+    def test_new_session_keeps_calendar_width_and_selected_period(self):
         book = FakeBook(self.directory('Tier', ['B', '']))
         states = {}
         def state(book_id, sheet_id, value=None):
@@ -283,6 +283,7 @@ class PersistenceTests(unittest.TestCase):
         with patch.object(view, '_state', side_effect=state):
             view.sync_views(book, data)
             matrix = book.worksheet(view.MONTHLY)
+            matrix.values[0][1] = '2026-10'
             book.requests = []
             data['sessions'].append(dict(key='second', starts_at='2026-09-18T19:00:00+03:00',
                                          end_time=None, schedule_id=2, cancelled=False))
@@ -290,12 +291,12 @@ class PersistenceTests(unittest.TestCase):
         headers = [r['repeatCell']['range'] for r in book.requests if 'repeatCell' in r
                    and r['repeatCell']['range']['sheetId'] == matrix.id
                    and r['repeatCell']['range']['startRowIndex'] == 0]
-        self.assertEqual([(r['startColumnIndex'], r['endColumnIndex']) for r in headers], [(5, 6)])
+        self.assertEqual(headers, [])
+        self.assertEqual(matrix.values[0][1], '2026-10')
+        self.assertEqual(len(matrix.values[2]),35)
         rules = [r['addConditionalFormatRule']['rule'] for r in book.requests if 'addConditionalFormatRule' in r
                  and r['addConditionalFormatRule']['rule']['ranges'][0]['sheetId'] == matrix.id]
-        self.assertEqual(len(rules), 2)
-        self.assertEqual([r['ranges'][0]['startColumnIndex'] for r in rules], [5, 5])
-        self.assertEqual([r['ranges'][0]['endColumnIndex'] for r in rules], [6, 6])
+        self.assertEqual(rules, [])
 
     def test_detail_filter_is_open_ended_and_not_replaced_when_rows_grow(self):
         book = FakeBook(self.directory('Tier', ['B', '']))
