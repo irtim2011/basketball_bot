@@ -32,6 +32,21 @@ def overview(data):
 
 
 class ProjectionTests(unittest.TestCase):
+    def test_live_views_exclude_started_and_cancelled_without_removing_history(self):
+        data = snapshot()
+        original = data['sessions'][0]
+        for key, start, extra in [
+            ('past','2026-09-16T19:00:00+03:00',{}),
+            ('started','2026-09-17T18:00:00+03:00',{}),
+            ('cancelled','2026-09-18T19:00:00+03:00',{'cancelled':True}),
+            ('removed','2026-09-19T19:00:00+03:00',{'in_schedule':False})]:
+            data['sessions'].append(dict(original,key=key,starts_at=start,**extra))
+        result = view.project(data, upcoming_only=True)
+        self.assertEqual(len(result[view.GENERAL]['values']),3)
+        self.assertEqual(len(result[view.DETAILS]['values']),3)
+        self.assertIn('17.09.2026',result[view.GENERAL]['values'][2][0])
+        self.assertEqual(len(data['sessions']),5)
+
     def test_precedence_and_pending_is_not_no(self):
         data = snapshot()
         answer(data, 'month', 'yes')

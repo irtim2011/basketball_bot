@@ -104,7 +104,7 @@ def _history(changes):
     return '\n'.join(lines)
 
 
-def project(snapshot, tier_limit=500):
+def project(snapshot, tier_limit=500, upcoming_only=False):
     now = instant(snapshot['generated_at'])
     enabled = instant(snapshot['enabled_at']) if snapshot.get('enabled_at') else None
     people = sorted(snapshot.get('participants', []), key=lambda p: (p.get('full_name') or '', int(p['public_id'])))
@@ -168,6 +168,8 @@ def project(snapshot, tier_limit=500):
                 'Последние 10 переходов. Полный журнал хранит бот.', '']]
     for session in sessions:
         if session.get('cancelled') or not session.get('in_schedule', True):
+            continue
+        if upcoming_only and instant(session['starts_at']) <= now:
             continue
         cutoff = instant(session['starts_at'])-timedelta(hours=24)
         count = [0]*6
@@ -329,7 +331,7 @@ def sync_views(book, snapshot):
     from finance_roster import ensure_tier
     ensure_tier(book)
     directory = book.worksheet('Справочник_клиентов')
-    projection = project(snapshot, directory.row_count)
+    projection = project(snapshot, directory.row_count, upcoming_only=True)
     import period_views
     calendars = period_views.build(snapshot, directory.row_count)
     projection.update(calendars)
